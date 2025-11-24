@@ -410,6 +410,7 @@ tbody tr:nth-child(even) {
   margin-top: 8px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .log-initial-meta {

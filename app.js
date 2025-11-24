@@ -1245,9 +1245,8 @@ function buildSummaryTable(card) {
   return html;
 }
 
-function renderInitialSnapshot(card) {
-  const container = document.getElementById('log-initial-view');
-  if (!container || !card) return;
+function buildInitialSnapshotHtml(card) {
+  if (!card) return '';
   const snapshot = card.initialSnapshot || card;
   const metaHtml = '<div class="log-initial-meta">' +
     '<div><strong>Наименование:</strong> ' + escapeHtml(snapshot.name || '') + '</div>' +
@@ -1255,7 +1254,13 @@ function renderInitialSnapshot(card) {
     '<div><strong>Описание:</strong> ' + escapeHtml(snapshot.desc || '') + '</div>' +
     '</div>';
   const opsHtml = buildSummaryTable(snapshot);
-  container.innerHTML = metaHtml + opsHtml;
+  return metaHtml + opsHtml;
+}
+
+function renderInitialSnapshot(card) {
+  const container = document.getElementById('log-initial-view');
+  if (!container || !card) return;
+  container.innerHTML = buildInitialSnapshotHtml(card);
 }
 
 function renderLogModal(cardId) {
@@ -1328,12 +1333,56 @@ function printSummaryTable() {
   win.print();
 }
 
+function printFullLog() {
+  if (!logContextCardId) return;
+  const card = cards.find(c => c.id === logContextCardId);
+  if (!card) return;
+  const barcodeCanvas = document.getElementById('log-barcode-canvas');
+  const barcodeData = barcodeCanvas ? barcodeCanvas.toDataURL('image/png') : '';
+  const initialHtml = buildInitialSnapshotHtml(card);
+  const historyHtml = buildLogHistoryTable(card);
+  const summaryHtml = buildSummaryTable(card);
+  const win = window.open('', '_blank');
+  if (!win) return;
+  const styles = `
+    @page { size: A4 landscape; margin: 12mm; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    h2, h3, h4 { margin: 8px 0; }
+    .meta-print { margin: 6px 0; font-size: 13px; }
+    .barcode-print { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; vertical-align: top; }
+    thead { background: #f3f4f6; }
+    .section-spacer { margin-top: 12px; }
+  `;
+  win.document.write('<html><head><title>История изменений</title><style>' + styles + '</style></head><body>');
+  win.document.write('<h2>' + escapeHtml(card.name || '') + '</h2>');
+  win.document.write('<div class="meta-print"><strong>Заказ:</strong> ' + escapeHtml(card.orderNo || '') + '</div>');
+  win.document.write('<div class="meta-print"><strong>Статус:</strong> ' + escapeHtml(cardStatusText(card)) + '</div>');
+  win.document.write('<div class="meta-print"><strong>Создана:</strong> ' + escapeHtml(new Date(card.createdAt || Date.now()).toLocaleString()) + '</div>');
+  if (barcodeData) {
+    win.document.write('<div class="barcode-print"><img src="' + barcodeData + '" style="max-height:80px;" /><strong>' + escapeHtml(card.barcode || '') + '</strong></div>');
+  }
+  win.document.write('<div class="section-spacer"><h3>Вид карты при создании</h3>' + initialHtml + '</div>');
+  win.document.write('<div class="section-spacer"><h3>История изменений</h3>' + historyHtml + '</div>');
+  win.document.write('<div class="section-spacer"><h3>Сводная таблица операций</h3>' + summaryHtml + '</div>');
+  win.document.write('</body></html>');
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
 function setupLogModal() {
   const modal = document.getElementById('log-modal');
   const closeBtn = document.getElementById('log-close');
   const printBtn = document.getElementById('log-print-summary');
+  const printAllBtn = document.getElementById('log-print-all');
+  const closeBottomBtn = document.getElementById('log-close-bottom');
   if (closeBtn) {
     closeBtn.addEventListener('click', () => closeLogModal());
+  }
+  if (closeBottomBtn) {
+    closeBottomBtn.addEventListener('click', () => closeLogModal());
   }
   if (modal) {
     modal.addEventListener('click', (e) => {
@@ -1342,6 +1391,9 @@ function setupLogModal() {
   }
   if (printBtn) {
     printBtn.addEventListener('click', () => printSummaryTable());
+  }
+  if (printAllBtn) {
+    printAllBtn.addEventListener('click', () => printFullLog());
   }
 }
 
