@@ -449,6 +449,13 @@ footer {
   color: #374151;
 }
 
+.executor-input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+}
+
 .summary-barcode {
   display: inline-flex;
   align-items: center;

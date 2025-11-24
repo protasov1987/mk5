@@ -14,6 +14,7 @@ let activeCardDraft = null;
 let activeCardOriginalId = null;
 let activeCardIsNew = false;
 let routeOpCodeFilter = '';
+let cardsSearchTerm = '';
 
 function setConnectionStatus(message, variant = 'info') {
   const banner = document.getElementById('server-status');
@@ -663,10 +664,25 @@ function renderCardsTable() {
     wrapper.innerHTML = '<p>Список технологических карт пуст. Нажмите «Создать карту».</p>';
     return;
   }
+
+  const termRaw = cardsSearchTerm.trim();
+  let sortedCards = [...visibleCards];
+  if (termRaw) {
+    sortedCards.sort((a, b) => cardSearchScore(b, termRaw) - cardSearchScore(a, termRaw));
+  }
+  const filteredCards = termRaw
+    ? sortedCards.filter(card => cardSearchScore(card, termRaw) > 0)
+    : sortedCards;
+
+  if (!filteredCards.length) {
+    wrapper.innerHTML = '<p>Карты по запросу не найдены.</p>';
+    return;
+  }
+
   let html = '<table><thead><tr>' +
     '<th>№ карты (EAN-13)</th><th>Наименование</th><th>Заказ</th><th>Статус</th><th>Операций</th><th>Действия</th>' +
     '</tr></thead><tbody>';
-  visibleCards.forEach(card => {
+  filteredCards.forEach(card => {
     html += '<tr>' +
       '<td><button class="btn-link barcode-link" data-id="' + card.id + '">' + escapeHtml(card.barcode || '') + '</button></td>' +
       '<td>' + escapeHtml(card.name) + '</td>' +
@@ -835,7 +851,7 @@ function renderRouteTableDraft() {
       '<td>' + escapeHtml(o.centerName) + '</td>' +
       '<td>' + escapeHtml(o.opCode || '') + '</td>' +
       '<td>' + renderOpName(o) + '</td>' +
-      '<td>' + escapeHtml(o.executor || '') + '</td>' +
+      '<td><input class="executor-input" data-rop-id="' + o.id + '" value="' + escapeHtml(o.executor || '') + '" placeholder="ФИО" /></td>' +
       '<td>' + (o.plannedMinutes || '') + '</td>' +
       '<td>' + statusBadge(o.status) + '</td>' +
       '<td><div class="table-actions">' +
@@ -862,6 +878,17 @@ function renderRouteTableDraft() {
         document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
         renderRouteTableDraft();
       });
+    });
+  });
+
+  wrapper.querySelectorAll('.executor-input').forEach(input => {
+    input.addEventListener('input', e => {
+      const ropId = input.getAttribute('data-rop-id');
+      const value = (e.target.value || '').trim();
+      const op = activeCardDraft.operations.find(o => o.id === ropId);
+      if (!op) return;
+      op.executor = value;
+      document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
     });
   });
 }
@@ -1472,6 +1499,22 @@ function setupForms() {
         fillRouteSelectors();
         e.target.reset();
       });
+
+  const cardsSearchInput = document.getElementById('cards-search');
+  const cardsSearchClear = document.getElementById('cards-search-clear');
+  if (cardsSearchInput) {
+    cardsSearchInput.addEventListener('input', e => {
+      cardsSearchTerm = e.target.value || '';
+      renderCardsTable();
+    });
+  }
+  if (cardsSearchClear) {
+    cardsSearchClear.addEventListener('click', () => {
+      cardsSearchTerm = '';
+      if (cardsSearchInput) cardsSearchInput.value = '';
+      renderCardsTable();
+    });
+  }
 
   const searchInput = document.getElementById('workorder-search');
   const searchClearBtn = document.getElementById('workorder-search-clear');
