@@ -106,15 +106,16 @@ function ensureAttachments(card) {
   }));
 }
 
-function ensureCardMeta(card) {
+function ensureCardMeta(card, options = {}) {
   if (!card) return;
+  const { skipSnapshot = false } = options;
   if (typeof card.createdAt !== 'number') {
     card.createdAt = Date.now();
   }
   if (!Array.isArray(card.logs)) {
     card.logs = [];
   }
-  if (!card.initialSnapshot) {
+  if (!card.initialSnapshot && !skipSnapshot) {
     const snapshot = cloneCard(card);
     snapshot.logs = [];
     card.initialSnapshot = snapshot;
@@ -899,7 +900,7 @@ function openCardModal(cardId) {
     activeCardDraft = createEmptyCardDraft();
     activeCardIsNew = true;
   }
-  ensureCardMeta(activeCardDraft);
+  ensureCardMeta(activeCardDraft, { skipSnapshot: activeCardIsNew });
   document.getElementById('card-modal-title').textContent = activeCardIsNew ? 'Создание карты' : 'Редактирование карты';
   document.getElementById('card-id').value = activeCardDraft.id;
   document.getElementById('card-name').value = activeCardDraft.name || '';
