@@ -19,6 +19,7 @@ let attachmentContext = null;
 const ATTACH_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar,.7z';
 const ATTACH_MAX_SIZE = 15 * 1024 * 1024; // 15 MB
 let logContextCardId = null;
+let clockIntervalId = null;
 
 function setConnectionStatus(message, variant = 'info') {
   const banner = document.getElementById('server-status');
@@ -31,6 +32,18 @@ function setConnectionStatus(message, variant = 'info') {
 
   banner.textContent = message;
   banner.className = `status-banner status-${variant}`;
+}
+
+function startRealtimeClock() {
+  const el = document.getElementById('realtime-clock');
+  if (!el) return;
+  const update = () => {
+    const now = new Date();
+    el.textContent = now.toLocaleString();
+  };
+  update();
+  if (clockIntervalId) clearInterval(clockIntervalId);
+  clockIntervalId = setInterval(update, 1000);
 }
 
 // === УТИЛИТЫ ===
@@ -72,6 +85,32 @@ function formatSecondsToHMS(sec) {
   const mm = m.toString().padStart(2, '0');
   const ss = s.toString().padStart(2, '0');
   return hh + ':' + mm + ':' + ss;
+}
+
+function formatDateTime(ts) {
+  if (!ts) return '-';
+  try {
+    return new Date(ts).toLocaleString();
+  } catch (e) {
+    return '-';
+  }
+}
+
+function formatStartEnd(op) {
+  const start = op.firstStartedAt || op.startedAt;
+  let endLabel = '-';
+  if (op.status === 'PAUSED') {
+    const pauseTs = op.lastPausedAt || Date.now();
+    endLabel = formatDateTime(pauseTs) + ' (П)';
+  } else if (op.finishedAt) {
+    endLabel = formatDateTime(op.finishedAt);
+  } else if (op.status === 'DONE' && op.finishedAt) {
+    endLabel = formatDateTime(op.finishedAt);
+  } else if (op.status === 'IN_PROGRESS') {
+    endLabel = '-';
+  }
+
+  return '<div class="nk-lines"><div>Н: ' + escapeHtml(formatDateTime(start)) + '</div><div>К: ' + escapeHtml(endLabel) + '</div></div>';
 }
 
 // Время операции с учётом пауз / продолжений
@@ -290,6 +329,12 @@ function drawBarcodeEAN13(canvas, code) {
   ctx.fillText(code, width / 2, barHeight + fontHeight);
 }
 
+function getBarcodeDataUrl(code) {
+  const canvas = document.createElement('canvas');
+  drawBarcodeEAN13(canvas, code || '');
+  return canvas.toDataURL('image/png');
+}
+
 function openBarcodeModal(card) {
   const modal = document.getElementById('barcode-modal');
   const canvas = document.getElementById('barcode-canvas');
@@ -361,7 +406,9 @@ function createRouteOpFromRefs(op, center, executor, plannedMinutes, order) {
     executor: executor || '',
     plannedMinutes: plannedMinutes || op.recTime || 30,
     status: 'NOT_STARTED',
+    firstStartedAt: null,
     startedAt: null,
+    lastPausedAt: null,
     finishedAt: null,
     actualSeconds: null,
     elapsedSeconds: 0,
@@ -636,6 +683,12 @@ async function loadData() {
     c.operations.forEach(op => {
       if (typeof op.elapsedSeconds !== 'number') {
         op.elapsedSeconds = 0;
+      }
+      if (typeof op.firstStartedAt !== 'number') {
+        op.firstStartedAt = op.startedAt || null;
+      }
+      if (typeof op.lastPausedAt !== 'number') {
+        op.lastPausedAt = null;
       }
       if (typeof op.comment !== 'string') {
         op.comment = '';
@@ -1211,7 +1264,7 @@ function buildSummaryTable(card) {
   const opsSorted = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   if (!opsSorted.length) return '<p>Маршрут пока пуст.</p>';
   let html = '<table><thead><tr>' +
-    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Текущее / факт. время</th><th>Комментарии</th>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Дата и время Н/К</th><th>Текущее / факт. время</th><th>Комментарии</th>' +
     '</tr></thead><tbody>';
 
   opsSorted.forEach((op, idx) => {
@@ -1228,6 +1281,8 @@ function buildSummaryTable(card) {
     }
 
     const executorHistory = buildExecutorHistory(card, op) || op.executor || '';
+    const startEndCell = formatStartEnd(op);
+
     html += '<tr data-row-id="' + rowId + '">' +
       '<td>' + (idx + 1) + '</td>' +
       '<td>' + escapeHtml(op.centerName) + '</td>' +
@@ -1236,6 +1291,7 @@ function buildSummaryTable(card) {
       '<td>' + escapeHtml(executorHistory) + '</td>' +
       '<td>' + (op.plannedMinutes || '') + '</td>' +
       '<td>' + statusBadge(op.status) + '</td>' +
+      '<td>' + startEndCell + '</td>' +
       '<td>' + timeCell + '</td>' +
       '<td>' + escapeHtml(op.comment || '') + '</td>' +
       '</tr>';
@@ -1307,8 +1363,7 @@ function printSummaryTable() {
   const card = cards.find(c => c.id === logContextCardId);
   if (!card) return;
   const summaryHtml = buildSummaryTable(card);
-  const barcodeCanvas = document.getElementById('log-barcode-canvas');
-  const barcodeData = barcodeCanvas ? barcodeCanvas.toDataURL('image/png') : '';
+  const barcodeData = getBarcodeDataUrl(card.barcode || '');
   const win = window.open('', '_blank');
   if (!win) return;
   const styles = `
@@ -1318,14 +1373,21 @@ function printSummaryTable() {
     th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; vertical-align: top; }
     thead { background: #f3f4f6; }
     .barcode-print { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
-    .meta-print { margin: 6px 0; font-size: 13px; }
+    .meta-print { margin: 2px 0; font-size: 13px; }
+    .meta-stack { display: flex; flex-direction: column; gap: 2px; }
   `;
   win.document.write('<html><head><title>Сводная таблица</title><style>' + styles + '</style></head><body>');
   win.document.write('<h2>' + escapeHtml(card.name || '') + '</h2>');
-  win.document.write('<div class="meta-print"><strong>Заказ:</strong> ' + escapeHtml(card.orderNo || '') + '</div>');
+  win.document.write('<div class="barcode-print">');
   if (barcodeData) {
-    win.document.write('<div class="barcode-print"><img src="' + barcodeData + '" style="max-height:80px;" /><strong>' + escapeHtml(card.barcode || '') + '</strong></div>');
+    win.document.write('<img src="' + barcodeData + '" style="max-height:80px;" />');
   }
+  win.document.write('<div class="meta-stack">');
+  win.document.write('<div class="meta-print"><strong>№ карты:</strong> ' + escapeHtml(card.barcode || '') + '</div>');
+  win.document.write('<div class="meta-print"><strong>Заказ:</strong> ' + escapeHtml(card.orderNo || '') + '</div>');
+  win.document.write('<div class="meta-print"><strong>Описание:</strong> ' + escapeHtml(card.desc || '') + '</div>');
+  win.document.write('<div class="meta-print"><strong>Статус:</strong> ' + escapeHtml(cardStatusText(card)) + '</div>');
+  win.document.write('</div></div>');
   win.document.write(summaryHtml);
   win.document.write('</body></html>');
   win.document.close();
@@ -1337,8 +1399,7 @@ function printFullLog() {
   if (!logContextCardId) return;
   const card = cards.find(c => c.id === logContextCardId);
   if (!card) return;
-  const barcodeCanvas = document.getElementById('log-barcode-canvas');
-  const barcodeData = barcodeCanvas ? barcodeCanvas.toDataURL('image/png') : '';
+  const barcodeData = getBarcodeDataUrl(card.barcode || '');
   const initialHtml = buildInitialSnapshotHtml(card);
   const historyHtml = buildLogHistoryTable(card);
   const summaryHtml = buildSummaryTable(card);
@@ -1588,7 +1649,7 @@ function cardSearchScore(card, term) {
 function buildOperationsTable(card, { readonly = false } = {}) {
   const opsSorted = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   let html = '<table><thead><tr>' +
-    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Текущее / факт. время</th>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Дата и время Н/К</th><th>Текущее / факт. время</th>' +
     (readonly ? '' : '<th>Действия</th>') +
     '<th>Комментарии</th>' +
     '</tr></thead><tbody>';
@@ -1628,6 +1689,11 @@ function buildOperationsTable(card, { readonly = false } = {}) {
       ? '<div class="comment-readonly">' + escapeHtml(op.comment || '') + '</div>'
       : '<textarea class="comment-input" data-card-id="' + card.id + '" data-op-id="' + op.id + '" maxlength="40" rows="1" placeholder="Комментарий">' + escapeHtml(op.comment || '') + '</textarea>';
 
+    const startEndCell = formatStartEnd(op);
+    const actionsCell = readonly
+      ? ''
+      : '<td><div class="table-actions">' + actionsHtml + '</div></td>';
+
     html += '<tr data-row-id="' + rowId + '">' +
       '<td>' + (idx + 1) + '</td>' +
       '<td>' + escapeHtml(op.centerName) + '</td>' +
@@ -1636,8 +1702,9 @@ function buildOperationsTable(card, { readonly = false } = {}) {
       '<td>' + escapeHtml(op.executor || '') + '</td>' +
       '<td>' + (op.plannedMinutes || '') + '</td>' +
       '<td>' + statusBadge(op.status) + '</td>' +
+      '<td>' + startEndCell + '</td>' +
       '<td>' + timeCell + '</td>' +
-      (readonly ? '' : '<td><div class="table-actions">' + actionsHtml + '</div></td>') +
+      actionsCell +
       '<td>' + commentCell + '</td>' +
       '</tr>';
   });
@@ -1776,22 +1843,33 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
 
   wrapper.querySelectorAll('.comment-input').forEach(input => {
     autoResizeComment(input);
+    const cardId = input.getAttribute('data-card-id');
+    const opId = input.getAttribute('data-op-id');
+    const card = cards.find(c => c.id === cardId);
+    const op = card ? (card.operations || []).find(o => o.id === opId) : null;
+    if (!op) return;
+
+    input.addEventListener('focus', () => {
+      input.dataset.prevComment = op.comment || '';
+    });
+
     input.addEventListener('input', e => {
-      const cardId = input.getAttribute('data-card-id');
-      const opId = input.getAttribute('data-op-id');
-      const card = cards.find(c => c.id === cardId);
-      const op = card ? (card.operations || []).find(o => o.id === opId) : null;
-      if (!op) return;
       const value = (e.target.value || '').slice(0, 40);
       e.target.value = value;
-      const prev = op.comment || '';
       op.comment = value;
+      autoResizeComment(e.target);
+    });
+
+    input.addEventListener('blur', e => {
+      const value = (e.target.value || '').slice(0, 40);
+      e.target.value = value;
+      const prev = input.dataset.prevComment || '';
       if (prev !== value) {
         recordCardLog(card, { action: 'Комментарий', object: opLogLabel(op), field: 'comment', targetId: op.id, oldValue: prev, newValue: value });
       }
+      op.comment = value;
       saveData();
       renderDashboard();
-      autoResizeComment(e.target);
     });
   });
 
@@ -1814,8 +1892,11 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
       const prevCardStatus = card.status;
 
       if (action === 'start') {
+        const now = Date.now();
+        if (!op.firstStartedAt) op.firstStartedAt = now;
         op.status = 'IN_PROGRESS';
-        op.startedAt = Date.now();
+        op.startedAt = now;
+        op.lastPausedAt = null;
         op.finishedAt = null;
         op.actualSeconds = null;
         op.elapsedSeconds = 0;
@@ -1824,6 +1905,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
           const now = Date.now();
           const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
           op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
+          op.lastPausedAt = now;
           op.startedAt = null;
           op.status = 'PAUSED';
         }
@@ -1832,8 +1914,10 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
         if (op.status === 'DONE' && typeof op.elapsedSeconds !== 'number') {
           op.elapsedSeconds = op.actualSeconds || 0;
         }
+        if (!op.firstStartedAt) op.firstStartedAt = now;
         op.status = 'IN_PROGRESS';
         op.startedAt = now;
+        op.lastPausedAt = null;
         op.finishedAt = null;
       } else if (action === 'stop') {
         const now = Date.now();
@@ -1843,6 +1927,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
         }
         op.startedAt = null;
         op.finishedAt = now;
+        op.lastPausedAt = null;
         op.actualSeconds = op.elapsedSeconds || 0;
         op.status = 'DONE';
       }
@@ -2244,6 +2329,7 @@ function setupAttachmentControls() {
 
 // === ИНИЦИАЛИЗАЦИЯ ===
 document.addEventListener('DOMContentLoaded', async () => {
+  startRealtimeClock();
   await loadData();
   setupNavigation();
   setupForms();

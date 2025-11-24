@@ -6,17 +6,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <header>
-    <h1>Маршрут технологических карт ТСЗП</h1>
-    <nav>
-      <button class="nav-btn active" data-target="dashboard">Дашборд</button>
-      <button class="nav-btn" data-target="cards">Тех. карты</button>
-      <button class="nav-btn" data-target="directory">Операции и участки</button>
-      <button class="nav-btn" data-target="workorders">Маршрутные квитанции</button>
-      <button class="nav-btn" data-target="archive">Архив</button>
-    </nav>
-  </header>
+  <body>
+    <header>
+      <h1>Маршрут технологических карт ТСЗП</h1>
+      <nav>
+        <button class="nav-btn active" data-target="dashboard">Дашборд</button>
+        <button class="nav-btn" data-target="cards">Тех. карты</button>
+        <button class="nav-btn" data-target="directory">Операции и участки</button>
+        <button class="nav-btn" data-target="workorders">Маршрутные квитанции</button>
+        <button class="nav-btn" data-target="archive">Архив</button>
+      </nav>
+      <div class="header-meta">
+        <div id="realtime-clock" class="clock-display" aria-live="polite"></div>
+      </div>
+    </header>
 
   <div id="server-status" class="status-banner status-info hidden" role="status" aria-live="polite"></div>
 

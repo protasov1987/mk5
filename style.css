@@ -20,6 +20,20 @@ header {
   flex-wrap: wrap;
 }
 
+.header-meta {
+  margin-left: auto;
+}
+
+.clock-display {
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #e5e7eb;
+  min-width: 180px;
+  text-align: right;
+}
+
 header h1 {
   margin: 0;
   font-size: 20px;
@@ -205,6 +219,14 @@ thead {
 
 tbody tr:nth-child(even) {
   background: #f9fafb;
+}
+
+.nk-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 .badge {
