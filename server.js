@@ -1,15 +1,13 @@
-const express = require('express');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const url = require('url');
 
-const app = express();
 const PORT = process.env.PORT || 8000;
 const HOST = process.env.HOST || 'localhost';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
-
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static(__dirname));
+const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
 function genId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
@@ -140,16 +138,95 @@ function writeData(payload) {
   return safeData;
 }
 
-app.get('/api/data', (req, res) => {
-  res.json(readData());
+function sendJson(res, statusCode, data) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(data));
+}
+
+function serveStatic(req, res) {
+  const parsedUrl = url.parse(req.url);
+  let pathname = path.join(__dirname, decodeURIComponent(parsedUrl.pathname));
+
+  if (pathname.endsWith(path.sep)) {
+    pathname = path.join(pathname, 'index.html');
+  }
+
+  if (!pathname.startsWith(__dirname)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  fs.stat(pathname, (err, stats) => {
+    if (err || !stats.isFile()) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    const ext = path.extname(pathname).toLowerCase();
+    const mime = {
+      '.html': 'text/html; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.js': 'application/javascript; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.svg': 'image/svg+xml'
+    }[ext] || 'application/octet-stream';
+
+    fs.readFile(pathname, (readErr, data) => {
+      if (readErr) {
+        res.writeHead(500);
+        res.end('Server error');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': mime });
+      res.end(data);
+    });
+  });
+}
+
+function handleApi(req, res) {
+  if (req.method === 'GET' && req.url.startsWith('/api/data')) {
+    sendJson(res, 200, readData());
+    return true;
+  }
+
+  if (req.method === 'POST' && req.url.startsWith('/api/data')) {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > MAX_BODY_SIZE) {
+        res.writeHead(413);
+        res.end('Payload too large');
+        req.destroy();
+      }
+    });
+
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const saved = writeData(parsed);
+        sendJson(res, 200, { status: 'ok', data: saved });
+      } catch (err) {
+        sendJson(res, 400, { error: 'Invalid JSON' });
+      }
+    });
+
+    return true;
+  }
+
+  return false;
+}
+
+const server = http.createServer((req, res) => {
+  if (handleApi(req, res)) return;
+  serveStatic(req, res);
 });
 
-app.post('/api/data', (req, res) => {
-  const saved = writeData(req.body || {});
-  res.json({ status: 'ok', data: saved });
-});
-
-app.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
   console.log(`Server started on http://${HOST}:${PORT}`);
 });

@@ -1,9 +1,5 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
-const STORAGE_KEYS = {
-  cards: 'tszp_cards',
-  ops: 'tszp_ops',
-  centers: 'tszp_centers'
-};
+const API_ENDPOINT = '/api/data';
 
 let cards = [];
 let ops = [];
@@ -303,23 +299,19 @@ function cardStatusText(card) {
 }
 
 // === ХРАНИЛИЩЕ ===
-function saveData() {
-  localStorage.setItem(STORAGE_KEYS.cards, JSON.stringify(cards));
-  localStorage.setItem(STORAGE_KEYS.ops, JSON.stringify(ops));
-  localStorage.setItem(STORAGE_KEYS.centers, JSON.stringify(centers));
+async function saveData() {
+  try {
+    await fetch(API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cards, ops, centers })
+    });
+  } catch (err) {
+    console.error('Ошибка сохранения данных на сервер', err);
+  }
 }
 
-function loadData() {
-  try {
-    cards = JSON.parse(localStorage.getItem(STORAGE_KEYS.cards) || '[]');
-    ops = JSON.parse(localStorage.getItem(STORAGE_KEYS.ops) || '[]');
-    centers = JSON.parse(localStorage.getItem(STORAGE_KEYS.centers) || '[]');
-  } catch (e) {
-    cards = [];
-    ops = [];
-    centers = [];
-  }
-
+function ensureDefaults() {
   if (!centers.length) {
     centers = [
       { id: genId('wc'), name: 'Механическая обработка', desc: 'Токарные и фрезерные операции' },
@@ -360,6 +352,24 @@ function loadData() {
       }
     ];
   }
+}
+
+async function loadData() {
+  try {
+    const res = await fetch(API_ENDPOINT);
+    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
+    const payload = await res.json();
+    cards = Array.isArray(payload.cards) ? payload.cards : [];
+    ops = Array.isArray(payload.ops) ? payload.ops : [];
+    centers = Array.isArray(payload.centers) ? payload.centers : [];
+  } catch (err) {
+    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
+    cards = [];
+    ops = [];
+    centers = [];
+  }
+
+  ensureDefaults();
 
   cards.forEach(c => {
     if (!c.barcode || !/^\d{13}$/.test(c.barcode)) {
@@ -377,7 +387,7 @@ function loadData() {
     recalcCardStatus(c);
   });
 
-  saveData();
+  await saveData();
 }
 
 // === РЕНДЕРИНГ ДАШБОРДА ===
@@ -1001,8 +1011,8 @@ function renderEverything() {
 }
 
 // === ИНИЦИАЛИЗАЦИЯ ===
-document.addEventListener('DOMContentLoaded', () => {
-  loadData();
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadData();
   setupNavigation();
   setupForms();
   setupBarcodeModal();
