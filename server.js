@@ -295,6 +295,31 @@ function normalizeData(payload) {
   return safe;
 }
 
+function mergeSnapshots(existingData, incomingData) {
+  const currentMap = Object.fromEntries((existingData.cards || []).map(card => [card.id, card]));
+
+  const mergedCards = (incomingData.cards || []).map(card => {
+    const existing = currentMap[card.id];
+    const next = deepClone(card);
+
+    // Сохраняем дату создания, если она уже была сохранена
+    next.createdAt = existing && existing.createdAt ? existing.createdAt : (next.createdAt || Date.now());
+
+    // Не перезаписываем изначальный снимок, если он уже был сохранён ранее
+    if (existing && existing.initialSnapshot) {
+      next.initialSnapshot = existing.initialSnapshot;
+    } else if (!next.initialSnapshot) {
+      const snapshot = deepClone(next);
+      snapshot.logs = [];
+      next.initialSnapshot = snapshot;
+    }
+
+    return next;
+  });
+
+  return { ...incomingData, cards: mergedCards };
+}
+
 const database = new JsonDatabase(DATA_FILE);
 
 async function handleApi(req, res) {
@@ -308,7 +333,10 @@ async function handleApi(req, res) {
     try {
       const raw = await parseBody(req);
       const parsed = JSON.parse(raw || '{}');
-      const saved = await database.update(() => normalizeData(parsed));
+      const saved = await database.update(current => {
+        const normalized = normalizeData(parsed);
+        return mergeSnapshots(current, normalized);
+      });
       sendJson(res, 200, { status: 'ok', data: saved });
     } catch (err) {
       const status = err.message === 'Payload too large' ? 413 : 400;
