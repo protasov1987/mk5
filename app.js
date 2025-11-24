@@ -521,11 +521,13 @@ function renderDashboard() {
     const activeOps = opsArr.filter(o => o.status === 'IN_PROGRESS' || o.status === 'PAUSED');
     let statusHtml = '';
 
+    let opsForDisplay = [];
     if (card.status === 'DONE') {
       statusHtml = '<span class="dash-card-completed">Завершена</span>';
     } else if (!opsArr.length || opsArr.every(o => o.status === 'NOT_STARTED' || !o.status)) {
       statusHtml = 'Не запущена';
     } else if (activeOps.length) {
+      opsForDisplay = activeOps;
       activeOps.forEach(op => {
         const elapsed = getOperationElapsedSeconds(op);
         const plannedSec = (op.plannedMinutes || 0) * 60;
@@ -549,6 +551,7 @@ function renderDashboard() {
           const newOrder = typeof o.order === 'number' ? o.order : 999999;
           if (newOrder < curOrder) next = o;
         });
+        opsForDisplay = [next];
         statusHtml = escapeHtml(next.opName) + ' (ожидание)';
       } else {
         statusHtml = 'Не запущена';
@@ -556,7 +559,7 @@ function renderDashboard() {
     }
 
     const completedCount = opsArr.filter(o => o.status === 'DONE').length;
-    const commentLines = opsArr
+    const commentLines = opsForDisplay
       .filter(o => o.comment)
       .map(o => '<div class="dash-comment-line"><span class="dash-comment-op">' + escapeHtml(o.opName) + ':</span> ' + escapeHtml(o.comment) + '</div>');
     const commentCell = commentLines.join('');
