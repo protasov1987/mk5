@@ -1303,6 +1303,45 @@ function buildSummaryTable(card) {
   return html;
 }
 
+function buildInitialSummaryTable(card) {
+  const opsSorted = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  if (!opsSorted.length) return '<p>Маршрут пока пуст.</p>';
+  let html = '<table><thead><tr>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Текущее / факт. время</th><th>Комментарии</th>' +
+    '</tr></thead><tbody>';
+
+  opsSorted.forEach((op, idx) => {
+    const rowId = card.id + '::' + op.id;
+    const elapsed = getOperationElapsedSeconds(op);
+    let timeCell = '';
+    if (op.status === 'IN_PROGRESS' || op.status === 'PAUSED') {
+      timeCell = '<span class="wo-timer" data-row-id="' + rowId + '">' + formatSecondsToHMS(elapsed) + '</span>';
+    } else if (op.status === 'DONE') {
+      const seconds = typeof op.elapsedSeconds === 'number' && op.elapsedSeconds
+        ? op.elapsedSeconds
+        : (op.actualSeconds || 0);
+      timeCell = formatSecondsToHMS(seconds);
+    }
+
+    const executorHistory = buildExecutorHistory(card, op) || op.executor || '';
+
+    html += '<tr data-row-id="' + rowId + '">' +
+      '<td>' + (idx + 1) + '</td>' +
+      '<td>' + escapeHtml(op.centerName) + '</td>' +
+      '<td>' + escapeHtml(op.opCode || '') + '</td>' +
+      '<td>' + renderOpName(op) + '</td>' +
+      '<td>' + escapeHtml(executorHistory) + '</td>' +
+      '<td>' + (op.plannedMinutes || '') + '</td>' +
+      '<td>' + statusBadge(op.status) + '</td>' +
+      '<td>' + timeCell + '</td>' +
+      '<td>' + escapeHtml(op.comment || '') + '</td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  return html;
+}
+
 function buildInitialSnapshotHtml(card) {
   if (!card) return '';
   const snapshot = card.initialSnapshot || card;
@@ -1311,7 +1350,7 @@ function buildInitialSnapshotHtml(card) {
     '<div><strong>Заказ:</strong> ' + escapeHtml(snapshot.orderNo || '') + '</div>' +
     '<div><strong>Описание:</strong> ' + escapeHtml(snapshot.desc || '') + '</div>' +
     '</div>';
-  const opsHtml = buildSummaryTable(snapshot);
+  const opsHtml = buildInitialSummaryTable(snapshot);
   return metaHtml + opsHtml;
 }
 
