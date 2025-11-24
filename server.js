@@ -2,11 +2,12 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const { JsonDatabase, deepClone } = require('./db');
 
 const PORT = process.env.PORT || 8000;
 const HOST = process.env.HOST || 'localhost';
 const DATA_DIR = path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
+const DATA_FILE = path.join(DATA_DIR, 'database.json');
 const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
 function genId(prefix) {
@@ -65,12 +66,6 @@ function createRouteOpFromRefs(op, center, executor, plannedMinutes, order) {
   };
 }
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
 function buildDefaultData() {
   const centers = [
     { id: genId('wc'), name: 'Механическая обработка', desc: 'Токарные и фрезерные операции' },
@@ -102,40 +97,6 @@ function buildDefaultData() {
   ];
 
   return { cards, ops, centers };
-}
-
-function readData() {
-  ensureDataDir();
-  if (!fs.existsSync(DATA_FILE)) {
-    const defaults = buildDefaultData();
-    fs.writeFileSync(DATA_FILE, JSON.stringify(defaults, null, 2), 'utf8');
-    return defaults;
-  }
-
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed.cards || !parsed.ops || !parsed.centers) {
-      throw new Error('Некорректный формат данных');
-    }
-    return parsed;
-  } catch (err) {
-    console.warn('Не удалось прочитать данные, создаём новые', err);
-    const defaults = buildDefaultData();
-    fs.writeFileSync(DATA_FILE, JSON.stringify(defaults, null, 2), 'utf8');
-    return defaults;
-  }
-}
-
-function writeData(payload) {
-  const safeData = {
-    cards: Array.isArray(payload.cards) ? payload.cards : [],
-    ops: Array.isArray(payload.ops) ? payload.ops : [],
-    centers: Array.isArray(payload.centers) ? payload.centers : []
-  };
-  ensureDataDir();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(safeData, null, 2), 'utf8');
-  return safeData;
 }
 
 function sendJson(res, statusCode, data) {
@@ -188,45 +149,116 @@ function serveStatic(req, res) {
   });
 }
 
-function handleApi(req, res) {
-  if (req.method === 'GET' && req.url.startsWith('/api/data')) {
-    sendJson(res, 200, readData());
-    return true;
-  }
-
-  if (req.method === 'POST' && req.url.startsWith('/api/data')) {
+function parseBody(req) {
+  return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => {
       body += chunk;
       if (body.length > MAX_BODY_SIZE) {
-        res.writeHead(413);
-        res.end('Payload too large');
+        reject(new Error('Payload too large'));
         req.destroy();
       }
     });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
 
-    req.on('end', () => {
-      try {
-        const parsed = JSON.parse(body || '{}');
-        const saved = writeData(parsed);
-        sendJson(res, 200, { status: 'ok', data: saved });
-      } catch (err) {
-        sendJson(res, 400, { error: 'Invalid JSON' });
-      }
-    });
+function recalcCardStatus(card) {
+  const opsArr = card.operations || [];
+  if (!opsArr.length) {
+    card.status = 'NOT_STARTED';
+    return;
+  }
+  const hasActive = opsArr.some(o => o.status === 'IN_PROGRESS' || o.status === 'PAUSED');
+  const allDone = opsArr.length > 0 && opsArr.every(o => o.status === 'DONE');
+  const hasNotStarted = opsArr.some(o => o.status === 'NOT_STARTED' || !o.status);
+  if (hasActive) {
+    card.status = 'IN_PROGRESS';
+  } else if (allDone && !hasNotStarted) {
+    card.status = 'DONE';
+  } else {
+    card.status = 'NOT_STARTED';
+  }
+}
 
+function normalizeCard(card) {
+  const safeCard = deepClone(card);
+  safeCard.operations = (safeCard.operations || []).map(op => ({
+    ...op,
+    elapsedSeconds: typeof op.elapsedSeconds === 'number' ? op.elapsedSeconds : (op.actualSeconds || 0),
+    startedAt: op.startedAt || null,
+    finishedAt: op.finishedAt || null,
+    status: op.status || 'NOT_STARTED'
+  }));
+  recalcCardStatus(safeCard);
+  return safeCard;
+}
+
+function normalizeData(payload) {
+  const safe = {
+    cards: Array.isArray(payload.cards) ? payload.cards.map(normalizeCard) : [],
+    ops: Array.isArray(payload.ops) ? payload.ops : [],
+    centers: Array.isArray(payload.centers) ? payload.centers : []
+  };
+  safe.cards = safe.cards.map(card => {
+    if (!card.barcode || !/^\d{13}$/.test(card.barcode)) {
+      card.barcode = generateUniqueEAN13(safe.cards);
+    }
+    return card;
+  });
+  return safe;
+}
+
+const database = new JsonDatabase(DATA_FILE);
+
+async function handleApi(req, res) {
+  if (req.method === 'GET' && req.url.startsWith('/api/data')) {
+    const data = await database.getData();
+    sendJson(res, 200, data);
+    return true;
+  }
+
+  if (req.method === 'POST' && req.url.startsWith('/api/data')) {
+    try {
+      const raw = await parseBody(req);
+      const parsed = JSON.parse(raw || '{}');
+      const saved = await database.update(() => normalizeData(parsed));
+      sendJson(res, 200, { status: 'ok', data: saved });
+    } catch (err) {
+      const status = err.message === 'Payload too large' ? 413 : 400;
+      sendJson(res, status, { error: err.message || 'Invalid JSON' });
+    }
     return true;
   }
 
   return false;
 }
 
-const server = http.createServer((req, res) => {
-  if (handleApi(req, res)) return;
+async function requestHandler(req, res) {
+  if (await handleApi(req, res)) return;
   serveStatic(req, res);
-});
+}
 
-server.listen(PORT, HOST, () => {
+async function startServer() {
+  await database.init(buildDefaultData);
+  const server = http.createServer((req, res) => {
+    requestHandler(req, res).catch(err => {
+      // eslint-disable-next-line no-console
+      console.error('Request error', err);
+      res.writeHead(500);
+      res.end('Server error');
+    });
+  });
+
+  server.listen(PORT, HOST, () => {
+    // eslint-disable-next-line no-console
+    console.log(`Server started on http://${HOST}:${PORT}`);
+  });
+}
+
+startServer().catch(err => {
   // eslint-disable-next-line no-console
-  console.log(`Server started on http://${HOST}:${PORT}`);
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });
