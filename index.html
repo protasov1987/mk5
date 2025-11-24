@@ -40,63 +40,6 @@
         <button class="btn-primary" id="btn-new-card">Создать карту</button>
         <div id="cards-table-wrapper"></div>
       </div>
-
-      <div class="card" id="card-editor" style="display:none;">
-        <h2>Редактирование карты</h2>
-        <form id="card-form" class="flex-col">
-          <input type="hidden" id="card-id" />
-          <div class="flex">
-            <div class="flex-col" style="flex:1 1 200px;">
-              <label for="card-name">Наименование карты / изделия</label>
-              <input id="card-name" required />
-            </div>
-            <div class="flex-col" style="flex:1 1 160px;">
-              <label for="card-order">Номер / код заказа</label>
-              <input id="card-order" />
-            </div>
-          </div>
-          <div class="flex-col">
-            <label for="card-desc">Описание</label>
-            <textarea id="card-desc"></textarea>
-          </div>
-          <div class="flex" style="align-items:center; justify-content:space-between;">
-            <div>
-              <strong>Статус:</strong> <span id="card-status-text"></span>
-            </div>
-            <div class="flex" style="gap:8px;">
-              <button type="submit" class="btn-primary">Сохранить карту</button>
-              <button type="button" id="btn-close-card" class="btn-secondary">Закрыть</button>
-            </div>
-          </div>
-        </form>
-      </div>
-
-      <div class="card" id="route-editor" style="display:none;">
-        <h3>Маршрут выполнения операций</h3>
-        <div id="route-table-wrapper"></div>
-        <h3>Добавить операцию в маршрут</h3>
-        <form id="route-form" class="flex" style="flex-wrap:wrap;">
-          <div class="flex-col" style="flex:2 1 180px;">
-            <label for="route-op">Операция</label>
-            <select id="route-op" required></select>
-          </div>
-          <div class="flex-col" style="flex:2 1 180px;">
-            <label for="route-center">Участок</label>
-            <select id="route-center" required></select>
-          </div>
-          <div class="flex-col" style="flex:1 1 120px;">
-            <label for="route-executor">Исполнитель</label>
-            <input id="route-executor" placeholder="ФИО" />
-          </div>
-          <div class="flex-col" style="flex:1 1 120px;">
-            <label for="route-planned">Плановое время (мин)</label>
-            <input id="route-planned" type="number" min="1" value="30" required />
-          </div>
-          <div class="flex-col" style="flex:0 0 auto; align-self:flex-end;">
-            <button type="submit" class="btn-primary">Добавить</button>
-          </div>
-        </form>
-      </div>
     </section>
 
     <!-- Справочники -->
@@ -208,6 +151,69 @@
       </div>
     </section>
   </main>
+
+  <div id="card-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="card-modal-title">
+    <div class="modal-content card-modal-content">
+      <div class="modal-header">
+        <h2 id="card-modal-title">Карта</h2>
+      </div>
+      <div class="modal-body">
+        <form id="card-form" class="flex-col">
+          <input type="hidden" id="card-id" />
+          <div class="flex">
+            <div class="flex-col" style="flex:1 1 200px;">
+              <label for="card-name">Наименование карты / изделия</label>
+              <input id="card-name" required />
+            </div>
+            <div class="flex-col" style="flex:1 1 160px;">
+              <label for="card-order">Номер / код заказа</label>
+              <input id="card-order" />
+            </div>
+          </div>
+          <div class="flex-col">
+            <label for="card-desc">Описание</label>
+            <textarea id="card-desc"></textarea>
+          </div>
+          <div class="flex" style="align-items:center; justify-content:space-between;">
+            <div>
+              <strong>Статус:</strong> <span id="card-status-text"></span>
+            </div>
+          </div>
+        </form>
+
+        <div class="card inset-card" id="route-editor">
+          <h3>Маршрут выполнения операций</h3>
+          <div id="route-table-wrapper"></div>
+          <h3>Добавить операцию в маршрут</h3>
+          <form id="route-form" class="flex" style="flex-wrap:wrap;">
+            <div class="flex-col" style="flex:2 1 180px;">
+              <label for="route-op">Операция</label>
+              <select id="route-op" required></select>
+            </div>
+            <div class="flex-col" style="flex:2 1 180px;">
+              <label for="route-center">Участок</label>
+              <select id="route-center" required></select>
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-executor">Исполнитель</label>
+              <input id="route-executor" placeholder="ФИО" />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-planned">Плановое время (мин)</label>
+              <input id="route-planned" type="number" min="1" value="30" required />
+            </div>
+            <div class="flex-col" style="flex:0 0 auto; align-self:flex-end;">
+              <button type="submit" class="btn-primary">Добавить</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="card-save-btn" class="btn-primary">Сохранить карту</button>
+        <button type="button" id="card-cancel-btn" class="btn-secondary">Закрыть</button>
+      </div>
+    </div>
+  </div>
 
   <footer>
     Локальное веб-приложение. Данные сохраняются на сервере и доступны из нескольких браузеров.

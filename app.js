@@ -10,6 +10,9 @@ let archiveSearchTerm = '';
 let archiveStatusFilter = 'ALL';
 let apiOnline = false;
 const workorderOpenCards = new Set();
+let activeCardDraft = null;
+let activeCardOriginalId = null;
+let activeCardIsNew = false;
 
 function setConnectionStatus(message, variant = 'info') {
   const banner = document.getElementById('server-status');
@@ -63,6 +66,10 @@ function autoResizeComment(el) {
   if (!el) return;
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
+}
+
+function cloneCard(card) {
+  return JSON.parse(JSON.stringify(card));
 }
 
 // === EAN-13: генерация и прорисовка ===
@@ -529,9 +536,8 @@ function renderDashboard() {
         if (plannedSec && elapsed > plannedSec) {
           cls += ' dash-op-overdue';
         }
-        const commentSuffix = op.comment ? ' — ' + escapeHtml(op.comment) : '';
         statusHtml += '<span class="' + cls + '">' +
-          escapeHtml(op.opName) + ' — ' + formatSecondsToHMS(elapsed) + commentSuffix +
+          escapeHtml(op.opName) + ' — ' + formatSecondsToHMS(elapsed) +
           '</span>';
       });
     } else {
@@ -543,8 +549,7 @@ function renderDashboard() {
           const newOrder = typeof o.order === 'number' ? o.order : 999999;
           if (newOrder < curOrder) next = o;
         });
-        const commentSuffix = next.comment ? ' — ' + escapeHtml(next.comment) : '';
-        statusHtml = escapeHtml(next.opName) + ' (ожидание)' + commentSuffix;
+        statusHtml = escapeHtml(next.opName) + ' (ожидание)';
       } else {
         statusHtml = 'Не запущена';
       }
@@ -590,6 +595,7 @@ function renderCardsTable() {
       '<td>' + (card.operations ? card.operations.length : 0) + '</td>' +
       '<td><div class="table-actions">' +
       '<button class="btn-small" data-action="edit-card" data-id="' + card.id + '">Открыть</button>' +
+      '<button class="btn-small" data-action="copy-card" data-id="' + card.id + '">Копировать</button>' +
       '<button class="btn-small btn-danger" data-action="delete-card" data-id="' + card.id + '">Удалить</button>' +
       '</div></td>' +
       '</tr>';
@@ -599,17 +605,19 @@ function renderCardsTable() {
 
   wrapper.querySelectorAll('button[data-action="edit-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
-      openCardEditor(btn.getAttribute('data-id'));
+      openCardModal(btn.getAttribute('data-id'));
+    });
+  });
+
+  wrapper.querySelectorAll('button[data-action="copy-card"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      duplicateCard(btn.getAttribute('data-id'));
     });
   });
 
   wrapper.querySelectorAll('button[data-action="delete-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-id');
-      const currentIdInput = document.getElementById('card-id');
-      if (currentIdInput && currentIdInput.value === id) {
-        closeCardEditor();
-      }
       cards = cards.filter(c => c.id !== id);
       saveData();
       renderEverything();
@@ -626,36 +634,110 @@ function renderCardsTable() {
   });
 }
 
-function openCardEditor(cardId) {
+function duplicateCard(cardId) {
   const card = cards.find(c => c.id === cardId);
   if (!card) return;
-  const editor = document.getElementById('card-editor');
-  editor.style.display = 'block';
-  document.getElementById('route-editor').style.display = 'block';
-
-  document.getElementById('card-id').value = card.id;
-  document.getElementById('card-name').value = card.name || '';
-  document.getElementById('card-order').value = card.orderNo || '';
-  document.getElementById('card-desc').value = card.desc || '';
-  document.getElementById('card-status-text').textContent = cardStatusText(card);
-
-  renderRouteTable(card);
-  fillRouteSelectors();
+  const copy = cloneCard(card);
+  copy.id = genId('card');
+  copy.barcode = generateUniqueEAN13();
+  copy.name = (card.name || '') + ' (копия)';
+  copy.status = 'NOT_STARTED';
+  copy.archived = false;
+  copy.operations = (copy.operations || []).map((op, idx) => ({
+    ...op,
+    id: genId('rop'),
+    status: 'NOT_STARTED',
+    startedAt: null,
+    finishedAt: null,
+    elapsedSeconds: 0,
+    actualSeconds: null,
+    comment: '',
+    order: typeof op.order === 'number' ? op.order : idx + 1
+  }));
+  recalcCardStatus(copy);
+  cards.push(copy);
+  saveData();
+  renderEverything();
 }
 
-function closeCardEditor() {
-  document.getElementById('card-editor').style.display = 'none';
-  document.getElementById('route-editor').style.display = 'none';
+function createEmptyCardDraft() {
+  return {
+    id: genId('card'),
+    barcode: generateUniqueEAN13(),
+    name: 'Новая карта',
+    orderNo: '',
+    desc: '',
+    status: 'NOT_STARTED',
+    archived: false,
+    operations: []
+  };
+}
+
+function openCardModal(cardId) {
+  const modal = document.getElementById('card-modal');
+  if (!modal) return;
+  activeCardOriginalId = cardId || null;
+  if (cardId) {
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return;
+    activeCardDraft = cloneCard(card);
+    activeCardIsNew = false;
+  } else {
+    activeCardDraft = createEmptyCardDraft();
+    activeCardIsNew = true;
+  }
+  document.getElementById('card-modal-title').textContent = activeCardIsNew ? 'Создание карты' : 'Редактирование карты';
+  document.getElementById('card-id').value = activeCardDraft.id;
+  document.getElementById('card-name').value = activeCardDraft.name || '';
+  document.getElementById('card-order').value = activeCardDraft.orderNo || '';
+  document.getElementById('card-desc').value = activeCardDraft.desc || '';
+  document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+  renderRouteTableDraft();
+  fillRouteSelectors();
+  modal.classList.remove('hidden');
+}
+
+function closeCardModal() {
+  const modal = document.getElementById('card-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
   document.getElementById('card-form').reset();
   document.getElementById('route-form').reset();
+  document.getElementById('route-table-wrapper').innerHTML = '';
+  activeCardDraft = null;
+  activeCardOriginalId = null;
+  activeCardIsNew = false;
 }
 
-// === МАРШРУТ КАРТЫ ===
-function renderRouteTable(card) {
+function saveCardDraft() {
+  if (!activeCardDraft) return;
+  const draft = cloneCard(activeCardDraft);
+  draft.operations = (draft.operations || []).map((op, idx) => ({
+    ...op,
+    order: typeof op.order === 'number' ? op.order : idx + 1
+  }));
+  recalcCardStatus(draft);
+  if (activeCardIsNew || activeCardOriginalId == null) {
+    cards.push(draft);
+  } else {
+    const idx = cards.findIndex(c => c.id === activeCardOriginalId);
+    if (idx >= 0) {
+      cards[idx] = draft;
+    }
+  }
+  saveData();
+  renderEverything();
+  closeCardModal();
+}
+
+// === МАРШРУТ КАРТЫ (ЧЕРЕЗ МОДАЛЬНОЕ ОКНО) ===
+function renderRouteTableDraft() {
   const wrapper = document.getElementById('route-table-wrapper');
-  const opsArr = card.operations || [];
+  if (!wrapper || !activeCardDraft) return;
+  const opsArr = activeCardDraft.operations || [];
   if (!opsArr.length) {
     wrapper.innerHTML = '<p>Маршрут пока пуст. Добавьте операции ниже.</p>';
+    document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
     return;
   }
   const sortedOps = [...opsArr].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -685,24 +767,22 @@ function renderRouteTable(card) {
     row.querySelectorAll('button[data-action]').forEach(btn => {
       const action = btn.getAttribute('data-action');
       btn.addEventListener('click', () => {
+        if (!activeCardDraft) return;
         if (action === 'delete') {
-          card.operations = card.operations.filter(o => o.id !== ropId);
+          activeCardDraft.operations = activeCardDraft.operations.filter(o => o.id !== ropId);
         } else if (action === 'move-up' || action === 'move-down') {
-          moveRouteOp(card, ropId, action === 'move-up' ? -1 : 1);
+          moveRouteOpInDraft(ropId, action === 'move-up' ? -1 : 1);
         }
-        recalcCardStatus(card);
-        saveData();
-        renderRouteTable(card);
-        renderDashboard();
-        renderCardsTable();
-        renderWorkordersTable();
+        document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+        renderRouteTableDraft();
       });
     });
   });
 }
 
-function moveRouteOp(card, ropId, delta) {
-  const opsArr = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+function moveRouteOpInDraft(ropId, delta) {
+  if (!activeCardDraft) return;
+  const opsArr = [...(activeCardDraft.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   const idx = opsArr.findIndex(o => o.id === ropId);
   if (idx < 0) return;
   const newIdx = idx + delta;
@@ -710,7 +790,7 @@ function moveRouteOp(card, ropId, delta) {
   const tmpOrder = opsArr[idx].order;
   opsArr[idx].order = opsArr[newIdx].order;
   opsArr[newIdx].order = tmpOrder;
-  card.operations = opsArr;
+  activeCardDraft.operations = opsArr;
 }
 
 function fillRouteSelectors() {
@@ -1203,45 +1283,36 @@ function setupNavigation() {
 // === ФОРМЫ ===
 function setupForms() {
   document.getElementById('btn-new-card').addEventListener('click', () => {
-    const newCard = {
-      id: genId('card'),
-      barcode: generateUniqueEAN13(),
-      name: 'Новая карта',
-      orderNo: '',
-      desc: '',
-      status: 'NOT_STARTED',
-      archived: false,
-      operations: []
-    };
-    cards.push(newCard);
-    saveData();
-    renderCardsTable();
-    openCardEditor(newCard.id);
+    openCardModal();
   });
 
-  document.getElementById('btn-close-card').addEventListener('click', closeCardEditor);
+  const cardForm = document.getElementById('card-form');
+  if (cardForm) {
+    cardForm.addEventListener('submit', e => e.preventDefault());
+  }
 
-  document.getElementById('card-form').addEventListener('submit', e => {
-    e.preventDefault();
-    const id = document.getElementById('card-id').value;
-    const card = cards.find(c => c.id === id);
-    if (!card) return;
-    card.name = document.getElementById('card-name').value.trim();
-    card.orderNo = document.getElementById('card-order').value.trim();
-    card.desc = document.getElementById('card-desc').value.trim();
-    recalcCardStatus(card);
-    saveData();
-    renderDashboard();
-    renderCardsTable();
-    document.getElementById('card-status-text').textContent = cardStatusText(card);
-    alert('Карта сохранена');
-  });
+  const saveBtn = document.getElementById('card-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      if (!activeCardDraft) return;
+      activeCardDraft.name = document.getElementById('card-name').value.trim();
+      activeCardDraft.orderNo = document.getElementById('card-order').value.trim();
+      activeCardDraft.desc = document.getElementById('card-desc').value.trim();
+      document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+      saveCardDraft();
+    });
+  }
+
+  const cancelBtn = document.getElementById('card-cancel-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      closeCardModal();
+    });
+  }
 
   document.getElementById('route-form').addEventListener('submit', e => {
     e.preventDefault();
-    const id = document.getElementById('card-id').value;
-    const card = cards.find(c => c.id === id);
-    if (!card) return;
+    if (!activeCardDraft) return;
     const opId = document.getElementById('route-op').value;
     const centerId = document.getElementById('route-center').value;
     const executor = document.getElementById('route-executor').value.trim();
@@ -1249,18 +1320,14 @@ function setupForms() {
     const opRef = ops.find(o => o.id === opId);
     const centerRef = centers.find(c => c.id === centerId);
     if (!opRef || !centerRef) return;
-    const maxOrder = card.operations && card.operations.length
-      ? Math.max.apply(null, card.operations.map(o => o.order || 0))
+    const maxOrder = activeCardDraft.operations && activeCardDraft.operations.length
+      ? Math.max.apply(null, activeCardDraft.operations.map(o => o.order || 0))
       : 0;
     const rop = createRouteOpFromRefs(opRef, centerRef, executor, planned, maxOrder + 1);
-    card.operations = card.operations || [];
-    card.operations.push(rop);
-    recalcCardStatus(card);
-    saveData();
-    renderRouteTable(card);
-    renderDashboard();
-    renderCardsTable();
-    renderWorkordersTable();
+    activeCardDraft.operations = activeCardDraft.operations || [];
+    activeCardDraft.operations.push(rop);
+    document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+    renderRouteTableDraft();
     document.getElementById('route-form').reset();
     fillRouteSelectors();
   });
