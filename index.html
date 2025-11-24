@@ -65,6 +65,10 @@
       <div class="card">
         <h2>Справочник операций</h2>
         <form id="op-form" class="flex" style="flex-wrap:wrap;">
+          <div class="flex-col" style="flex:0 1 160px;">
+            <label for="op-code">Код операции</label>
+            <input id="op-code" placeholder="Напр. OP-1234" />
+          </div>
           <div class="flex-col" style="flex:1 1 200px;">
             <label for="op-name">Название операции</label>
             <input id="op-name" required />
@@ -186,6 +190,10 @@
           <div id="route-table-wrapper"></div>
           <h3>Добавить операцию в маршрут</h3>
           <form id="route-form" class="flex" style="flex-wrap:wrap;">
+            <div class="flex-col" style="flex:1 1 140px;">
+              <label for="route-op-code-filter">Поиск по коду</label>
+              <input id="route-op-code-filter" placeholder="Напишите код" />
+            </div>
             <div class="flex-col" style="flex:2 1 180px;">
               <label for="route-op">Операция</label>
               <select id="route-op" required></select>

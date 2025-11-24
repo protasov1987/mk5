@@ -13,6 +13,7 @@ const workorderOpenCards = new Set();
 let activeCardDraft = null;
 let activeCardOriginalId = null;
 let activeCardIsNew = false;
+let routeOpCodeFilter = '';
 
 function setConnectionStatus(message, variant = 'info') {
   const banner = document.getElementById('server-status');
@@ -395,6 +396,11 @@ function renderOpLabel(op) {
   return escapeHtml(formatOpLabel(op));
 }
 
+function renderOpName(op) {
+  const name = op.opName || op.name || '';
+  return escapeHtml(name);
+}
+
 function collectUsedOpCodes() {
   const used = new Set();
   ops.forEach(o => {
@@ -766,6 +772,11 @@ function openCardModal(cardId) {
   document.getElementById('card-order').value = activeCardDraft.orderNo || '';
   document.getElementById('card-desc').value = activeCardDraft.desc || '';
   document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+  routeOpCodeFilter = '';
+  const routeFilterInput = document.getElementById('route-op-code-filter');
+  if (routeFilterInput) {
+    routeFilterInput.value = '';
+  }
   renderRouteTableDraft();
   fillRouteSelectors();
   modal.classList.remove('hidden');
@@ -816,14 +827,14 @@ function renderRouteTableDraft() {
   }
   const sortedOps = [...opsArr].sort((a, b) => (a.order || 0) - (b.order || 0));
   let html = '<table><thead><tr>' +
-    '<th>Порядок</th><th>Код операции</th><th>Операция</th><th>Участок</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Действия</th>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Действия</th>' +
     '</tr></thead><tbody>';
   sortedOps.forEach((o, index) => {
     html += '<tr data-rop-id="' + o.id + '">' +
       '<td>' + (index + 1) + '</td>' +
-      '<td>' + escapeHtml(o.opCode || '') + '</td>' +
-      '<td>' + renderOpLabel(o) + '</td>' +
       '<td>' + escapeHtml(o.centerName) + '</td>' +
+      '<td>' + escapeHtml(o.opCode || '') + '</td>' +
+      '<td>' + renderOpName(o) + '</td>' +
       '<td>' + escapeHtml(o.executor || '') + '</td>' +
       '<td>' + (o.plannedMinutes || '') + '</td>' +
       '<td>' + statusBadge(o.status) + '</td>' +
@@ -873,12 +884,20 @@ function fillRouteSelectors() {
   const centerSelect = document.getElementById('route-center');
   opSelect.innerHTML = '';
   centerSelect.innerHTML = '';
-  ops.forEach(o => {
+  const current = opSelect.value;
+  const filter = (routeOpCodeFilter || '').toLowerCase();
+  const filteredOps = filter
+    ? ops.filter(o => (o.code || '').toLowerCase().includes(filter))
+    : ops;
+  filteredOps.forEach(o => {
     const opt = document.createElement('option');
     opt.value = o.id;
-    opt.textContent = o.code ? `${o.code} — ${o.name}` : o.name;
+    opt.textContent = formatOpLabel(o);
     opSelect.appendChild(opt);
   });
+  if (current) {
+    opSelect.value = current;
+  }
   centers.forEach(c => {
     const opt = document.createElement('option');
     opt.value = c.id;
@@ -974,13 +993,14 @@ function cardSearchScore(card, term) {
 }
 
 function buildOperationsTable(card, { readonly = false } = {}) {
+  const opsSorted = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   let html = '<table><thead><tr>' +
-    '<th>Код операции</th><th>Операция</th><th>Участок</th><th>Исполнитель</th><th>Статус</th><th>План (мин)</th><th>Текущее / факт. время</th>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Текущее / факт. время</th>' +
     (readonly ? '' : '<th>Действия</th>') +
     '<th>Комментарии</th>' +
     '</tr></thead><tbody>';
 
-  card.operations.forEach(op => {
+  opsSorted.forEach((op, idx) => {
     const rowId = card.id + '::' + op.id;
     const elapsed = getOperationElapsedSeconds(op);
     let timeCell = '';
@@ -1016,12 +1036,13 @@ function buildOperationsTable(card, { readonly = false } = {}) {
       : '<textarea class="comment-input" data-card-id="' + card.id + '" data-op-id="' + op.id + '" maxlength="40" rows="1" placeholder="Комментарий">' + escapeHtml(op.comment || '') + '</textarea>';
 
     html += '<tr data-row-id="' + rowId + '">' +
-      '<td>' + escapeHtml(op.opCode || '') + '</td>' +
-      '<td>' + renderOpLabel(op) + '</td>' +
+      '<td>' + (idx + 1) + '</td>' +
       '<td>' + escapeHtml(op.centerName) + '</td>' +
+      '<td>' + escapeHtml(op.opCode || '') + '</td>' +
+      '<td>' + renderOpName(op) + '</td>' +
       '<td>' + escapeHtml(op.executor || '') + '</td>' +
-      '<td>' + statusBadge(op.status) + '</td>' +
       '<td>' + (op.plannedMinutes || '') + '</td>' +
+      '<td>' + statusBadge(op.status) + '</td>' +
       '<td>' + timeCell + '</td>' +
       (readonly ? '' : '<td><div class="table-actions">' + actionsHtml + '</div></td>') +
       '<td>' + commentCell + '</td>' +
@@ -1409,6 +1430,14 @@ function setupForms() {
     fillRouteSelectors();
   });
 
+  const routeOpCodeInput = document.getElementById('route-op-code-filter');
+  if (routeOpCodeInput) {
+    routeOpCodeInput.addEventListener('input', e => {
+      routeOpCodeFilter = (e.target.value || '').trim();
+      fillRouteSelectors();
+    });
+  }
+
   document.getElementById('center-form').addEventListener('submit', e => {
     e.preventDefault();
     const name = document.getElementById('center-name').value.trim();
@@ -1423,12 +1452,21 @@ function setupForms() {
 
       document.getElementById('op-form').addEventListener('submit', e => {
         e.preventDefault();
+        const codeInput = document.getElementById('op-code').value.trim();
         const name = document.getElementById('op-name').value.trim();
         const desc = document.getElementById('op-desc').value.trim();
         const time = parseInt(document.getElementById('op-time').value, 10) || 30;
         if (!name) return;
         const used = collectUsedOpCodes();
-        ops.push({ id: genId('op'), code: generateUniqueOpCode(used), name: name, desc: desc, recTime: time });
+        let code = codeInput;
+        if (code && used.has(code)) {
+          alert('Такой код операции уже используется. Введите другой код.');
+          return;
+        }
+        if (!code) {
+          code = generateUniqueOpCode(used);
+        }
+        ops.push({ id: genId('op'), code, name: name, desc: desc, recTime: time });
         saveData();
         renderOpsTable();
         fillRouteSelectors();
