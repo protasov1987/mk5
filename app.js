@@ -1379,7 +1379,9 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
   });
 
   wrapper.querySelectorAll('button[data-attach-card]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       const id = btn.getAttribute('data-attach-card');
       openAttachmentsModal(id, 'live');
     });
@@ -1543,7 +1545,9 @@ function renderArchiveTable() {
   });
 
   wrapper.querySelectorAll('button[data-attach-card]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       const id = btn.getAttribute('data-attach-card');
       openAttachmentsModal(id, 'live');
     });
