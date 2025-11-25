@@ -64,6 +64,33 @@ nav {
   flex-wrap: wrap;
 }
 
+.cards-subtabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
+
+.subtab-btn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #111827;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.subtab-btn.active {
+  background: #10b981;
+  color: #fff;
+  border-color: #10b981;
+}
+
+.cards-tab-panel.hidden {
+  display: none;
+}
+
 .nav-btn {
   border: none;
   padding: 8px 14px;
@@ -332,6 +359,13 @@ tbody tr:nth-child(even) {
 
 .directory-panel h3 {
   margin-top: 0;
+}
+
+.card-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  align-items: end;
 }
 
 .route-form-grid {

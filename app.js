@@ -2218,19 +2218,30 @@ function setupNavigation() {
   });
 }
 
+function setupCardsTabs() {
+  const tabButtons = document.querySelectorAll('.subtab-btn[data-cards-tab]');
+  const panels = {
+    list: document.getElementById('cards-list-panel'),
+    directory: document.getElementById('cards-directory-panel')
+  };
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-cards-tab');
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      Object.entries(panels).forEach(([key, panel]) => {
+        if (panel) panel.classList.toggle('hidden', key !== target);
+      });
+    });
+  });
+}
+
 // === ФОРМЫ ===
 function setupForms() {
   document.getElementById('btn-new-card').addEventListener('click', () => {
     openCardModal();
   });
-
-  const directoryPanel = document.getElementById('directory-inline');
-  const directoryToggle = document.getElementById('btn-toggle-directory');
-  if (directoryToggle && directoryPanel) {
-    directoryToggle.addEventListener('click', () => {
-      directoryPanel.classList.toggle('hidden');
-    });
-  }
 
   const cardForm = document.getElementById('card-form');
   if (cardForm) {
@@ -2440,6 +2451,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   startRealtimeClock();
   await loadData();
   setupNavigation();
+  setupCardsTabs();
   setupForms();
   setupBarcodeModal();
   setupAttachmentControls();
