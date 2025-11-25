@@ -787,6 +787,7 @@ footer {
 .dash-qty-line {
   font-size: 12px;
   margin-bottom: 2px;
+  white-space: nowrap;
 }
 
 .dash-comment-op {
@@ -800,6 +801,7 @@ footer {
   margin-bottom: 2px;
   padding: 2px 4px;
   border-radius: 4px;
+  white-space: nowrap;
 }
 
 .dash-op-paused {

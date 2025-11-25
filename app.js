@@ -811,7 +811,7 @@ function renderDashboard() {
       ? opsForDisplay.map(op => {
         const good = toSafeCount(op.goodCount || 0);
         const qtyText = qtyTotal > 0 ? (good + ' из ' + qtyTotal) : '—';
-        return '<div class="dash-qty-line"><span class="dash-comment-op">' + renderOpLabel(op) + ':</span> ' + qtyText + '</div>';
+        return '<div class="dash-qty-line">' + qtyText + '</div>';
       })
       : [];
 
