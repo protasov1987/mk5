@@ -1,5 +1,5 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
-const API_ENDPOINT = '/api/data';
+const API_ENDPOINT = '/api.php';
 
 let cards = [];
 let ops = [];
@@ -1178,7 +1178,7 @@ function renderAttachmentsModal() {
     files.forEach(file => {
       const date = new Date(file.createdAt || Date.now()).toLocaleString();
       const downloadAttr = attachmentContext.source === 'live'
-        ? 'href="/files/' + file.id + '" target="_blank" rel="noopener"'
+        ? 'href="files.php?id=' + file.id + '" target="_blank" rel="noopener"'
         : '';
       html += '<tr>' +
         '<td>' + escapeHtml(file.name || 'файл') + '</td>' +
