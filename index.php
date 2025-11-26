@@ -175,123 +175,150 @@
               <input id="card-order" />
             </div>
             <div class="flex-col">
-              <label for="card-drawing">Чертёж / обозначение</label>
+              <label for="card-drawing">Чертёж / обозначение детали</label>
               <input id="card-drawing" />
             </div>
             <div class="flex-col">
-              <label for="card-material">Материал / марка</label>
+              <label for="card-material">Материал</label>
               <input id="card-material" />
             </div>
           </div>
-
-          <label for="card-desc">Доп. описание</label>
-          <textarea id="card-desc" rows="3"></textarea>
-
-          <div class="route-header">
-            <h3>Маршрутная таблица</h3>
-            <div class="flex" style="gap:8px;">
-              <input id="route-filter" placeholder="Поиск по коду, названию, участку или исполнителю" />
-              <button type="button" class="btn-secondary" id="route-filter-clear">Сбросить</button>
+          <div class="flex-col">
+            <label for="card-desc">Описание</label>
+            <textarea id="card-desc"></textarea>
+          </div>
+          <div class="flex" style="align-items:center; justify-content:space-between;">
+            <div>
+              <strong>Статус:</strong> <span id="card-status-text"></span>
+            </div>
+            <div class="flex" style="gap:8px; align-items:center;">
+              <button type="button" id="card-attachments-btn" class="btn-secondary">📎 Файлы (0)</button>
             </div>
           </div>
-
-          <div class="route-table-wrapper">
-            <table class="table route-table" id="route-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Код</th>
-                  <th>Операция</th>
-                  <th>Участок</th>
-                  <th>Исполнитель</th>
-                  <th>План, мин</th>
-                  <th>Статус</th>
-                  <th>Норма, шт</th>
-                  <th>Брак, шт</th>
-                  <th>Ожид., шт</th>
-                  <th>Комментарий</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="route-body"></tbody>
-            </table>
-          </div>
-
-          <div class="flex" style="gap:8px;">
-            <button type="button" class="btn-secondary" id="route-add">Добавить строку</button>
-            <button type="button" class="btn-secondary" id="route-autofill">Заполнить по шаблону</button>
-            <button type="button" class="btn-secondary" id="route-clear">Очистить таблицу</button>
-          </div>
         </form>
+
+        <div class="card inset-card" id="route-editor">
+          <h3>Маршрут выполнения операций</h3>
+          <div id="route-table-wrapper"></div>
+          <h3>Добавить операцию в маршрут</h3>
+          <form id="route-form" class="flex route-form-grid" style="flex-wrap:wrap;">
+            <div class="flex-col" style="flex:1 1 140px;">
+              <label for="route-op-code-filter">Поиск по коду</label>
+              <input id="route-op-code-filter" placeholder="Напишите код" />
+            </div>
+            <div class="flex-col" style="flex:2 1 180px;">
+              <label for="route-op">Операция</label>
+              <select id="route-op" required></select>
+            </div>
+            <div class="flex-col" style="flex:2 1 180px;">
+              <label for="route-center">Участок</label>
+              <select id="route-center" required></select>
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-executor">Исполнитель</label>
+              <input id="route-executor" placeholder="ФИО" />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-planned">Плановое время (мин)</label>
+              <input id="route-planned" type="number" min="1" value="30" required />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-order">Очередность</label>
+              <input id="route-order" type="number" min="1" value="1" />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-notes">Комментарий</label>
+              <input id="route-notes" />
+            </div>
+            <div class="flex-col" style="flex:0 0 auto; align-self:flex-end;">
+              <button type="submit" class="btn-primary">Добавить</button>
+            </div>
+          </form>
+        </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" id="card-cancel">Отмена</button>
-        <button class="btn-primary" id="card-save">Сохранить</button>
+      <div class="modal-actions">
+        <button type="button" id="card-print-btn" class="btn-secondary">Печать</button>
+        <button type="button" id="card-save-btn" class="btn-primary">Сохранить карту</button>
+        <button type="button" id="card-cancel-btn" class="btn-secondary">Закрыть</button>
       </div>
     </div>
   </div>
 
-  <div id="barcode-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="barcode-modal-title">
-    <div class="modal-content barcode-modal-content">
-      <div class="modal-header">
-        <h2 id="barcode-modal-title">Штрихкод EAN-13</h2>
-      </div>
-      <div class="modal-body" id="barcode-body"></div>
-      <div class="modal-footer">
-        <button class="btn-secondary" data-close="barcode-modal">Закрыть</button>
-      </div>
-    </div>
-  </div>
+  <footer>
+    Локальное веб-приложение. Данные сохраняются на сервере и доступны из нескольких браузеров.
+  </footer>
 
-  <div id="attachments-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="attachments-modal-title">
-    <div class="modal-content attachments-modal-content">
+  <div id="attachments-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="attachments-title">
+    <div class="modal-content attachments-content">
       <div class="modal-header">
-        <h2 id="attachments-modal-title">Файлы карты</h2>
+        <h3 id="attachments-title">Файлы карты</h3>
       </div>
-      <div class="modal-body" id="attachments-body">
-        <div class="flex" style="gap:8px; align-items:flex-start;">
-          <label class="file-label">
-            <input type="file" id="attach-input" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar,.7z" />
-            <span>Прикрепить файлы</span>
-          </label>
-          <p style="font-size:12px; color:#6b7280; margin:0;">Допустимые форматы: pdf, doc/docx, jpg/png, zip/rar/7z. Максимум 15 МБ за файл.</p>
+      <div class="modal-body">
+        <div class="attachments-actions">
+          <button type="button" id="attachments-add-btn" class="btn-primary">Добавить файл</button>
+          <input type="file" id="attachments-input" class="hidden-input" accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,application/zip,application/x-rar-compressed,application/x-7z-compressed" multiple />
+          <span id="attachments-upload-hint" class="upload-hint"></span>
         </div>
         <div id="attachments-list"></div>
       </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" data-close="attachments-modal">Закрыть</button>
+      <div class="modal-actions">
+        <button type="button" id="attachments-close" class="btn-secondary">Закрыть</button>
       </div>
     </div>
   </div>
 
-  <div id="printable-area" class="hidden" aria-hidden="true"></div>
-
-  <div id="log-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="log-modal-title">
-    <div class="modal-content log-modal-content">
-      <div class="modal-header">
-        <h2 id="log-modal-title">История изменений маршрутной карты</h2>
+  <div id="log-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="log-title">
+    <div class="modal-content log-content">
+      <div class="modal-header log-header">
+        <h3 id="log-title">История изменений маршрутной карты</h3>
+        <button type="button" id="log-close" class="btn-secondary">Закрыть</button>
       </div>
-      <div class="modal-body log-modal-body">
-        <div id="log-card-details" class="log-card-details"></div>
-        <div id="log-table-wrapper" class="log-table-wrapper"></div>
-        <div id="log-summary-wrapper" class="log-summary-wrapper"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" data-close="log-modal">Закрыть</button>
-        <button class="btn-primary" id="log-print">Печать сводной таблицы</button>
+      <div class="modal-body log-body">
+        <div class="log-card-header">
+          <div class="log-barcode-block">
+            <canvas id="log-barcode-canvas"></canvas>
+            <div class="log-barcode-number" id="log-barcode-number"></div>
+          </div>
+          <div class="log-card-meta">
+            <div><strong>Наименование:</strong> <span id="log-card-name"></span></div>
+            <div><strong>Заказ:</strong> <span id="log-card-order"></span></div>
+            <div><strong>Статус:</strong> <span id="log-card-status"></span></div>
+            <div><strong>Создана:</strong> <span id="log-card-created"></span></div>
+          </div>
+        </div>
+        <div class="log-section">
+          <h4>Вид карты при создании</h4>
+          <div id="log-initial-view"></div>
+        </div>
+        <div class="log-section">
+          <h4>История изменений</h4>
+          <div id="log-history-table"></div>
+        </div>
+        <div class="log-section">
+          <h4>Сводная таблица операций</h4>
+          <div id="log-summary-table"></div>
+          <div class="log-summary-actions">
+            <button type="button" id="log-print-summary" class="btn-primary">Печать сводной таблицы</button>
+            <button type="button" id="log-print-all" class="btn-primary">Печать</button>
+            <button type="button" id="log-close-bottom" class="btn-secondary">Закрыть</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-  <div id="receipt-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="receipt-modal-title">
-    <div class="modal-content receipt-modal-content">
-      <div class="modal-header">
-        <h2 id="receipt-modal-title">Маршрутная квитанция</h2>
+  <!-- Модальное окно для штрихкода -->
+  <div id="barcode-modal" class="barcode-modal">
+    <div class="barcode-modal-content">
+      <h3>Штрихкод технологической карты</h3>
+      <p style="font-size:12px; color:#6b7280; margin-top:0;">Формат EAN-13</p>
+      <canvas id="barcode-canvas"></canvas>
+      <div style="margin-top:8px; font-size:14px;">
+        Код: <span id="barcode-modal-code"></span>
       </div>
-      <div class="modal-body" id="receipt-body"></div>
-      <div class="modal-footer">
-        <button class="btn-secondary" data-close="receipt-modal">Закрыть</button>
-        <button class="btn-primary" id="receipt-print">Печать</button>
+      <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+        <button id="btn-print-barcode" class="btn-primary">Печать</button>
+        <button id="btn-close-barcode" class="btn-secondary">Закрыть</button>
       </div>
     </div>
   </div>
