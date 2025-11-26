@@ -1,28 +1,4 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <title>Трекер маршрутных карт ТСЗП</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="style.css" />
-</head>
-  <body>
-    <header>
-      <div class="header-left">
-        <h1>Трекер маршрутных карт ТСЗП</h1>
-        <div id="realtime-clock" class="clock-display" aria-live="polite"></div>
-      </div>
-      <nav>
-        <button class="nav-btn active" data-target="dashboard">Дашборд</button>
-        <button class="nav-btn" data-target="cards">Тех. карты</button>
-        <button class="nav-btn" data-target="workorders">Трекер</button>
-        <button class="nav-btn" data-target="archive">Архив</button>
-      </nav>
-    </header>
-
-  <div id="server-status" class="status-banner status-info hidden" role="status" aria-live="polite"></div>
-
-  <main>
+<?php require_once __DIR__ . '/header.php'; ?>
     <!-- Дашборд -->
     <section id="dashboard" class="active">
       <div class="card">
@@ -140,8 +116,7 @@
         </div>
 
         <p style="font-size:12px; color:#6b7280; margin-top:0;">
-          Исполнитель выбирает нужную операцию и нажимает <strong>«Начать»</strong>, при необходимости <strong>«Пауза»</strong> /
-          <strong>«Продолжить»</strong>, после завершения — <strong>«Завершить»</strong>.
+          Исполнитель выбирает нужную операцию и нажимает <strong>«Начать»</strong>, при необходимости <strong>«Пауза»</strong> / <strong>«Продолжить»</strong>, после завершения — <strong>«Завершить»</strong>.
         </p>
         <div id="workorders-table-wrapper"></div>
       </div>
@@ -177,7 +152,6 @@
         <div id="archive-table-wrapper"></div>
       </div>
     </section>
-  </main>
 
   <div id="card-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="card-modal-title">
     <div class="modal-content card-modal-content">
@@ -247,6 +221,14 @@
             <div class="flex-col" style="flex:1 1 120px;">
               <label for="route-planned">Плановое время (мин)</label>
               <input id="route-planned" type="number" min="1" value="30" required />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-order">Очередность</label>
+              <input id="route-order" type="number" min="1" value="1" />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-notes">Комментарий</label>
+              <input id="route-notes" />
             </div>
             <div class="flex-col" style="flex:0 0 auto; align-self:flex-end;">
               <button type="submit" class="btn-primary">Добавить</button>
@@ -340,7 +322,4 @@
       </div>
     </div>
   </div>
-
-  <script src="app.js"></script>
-</body>
-</html>
+<?php require_once __DIR__ . '/footer.php'; ?>
