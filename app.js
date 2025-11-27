@@ -1,8 +1,6 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
 const API_ENDPOINT = 'api.php';
 const AUTH_ENDPOINT = 'auth.php';
-const GET_STATE_ENDPOINT = 'get_state.php';
-const UPDATE_STATE_ENDPOINT = 'update_state.php';
 
 let cards = [];
 let ops = [];
@@ -864,7 +862,7 @@ async function pushStateNow() {
 
   saveInFlight = true;
   try {
-    const res = await fetch(UPDATE_STATE_ENDPOINT, {
+    const res = await fetch(API_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cards, ops, centers })
@@ -1059,6 +1057,33 @@ function applyStatePayload(payload, { skipRender = false, persistDefaults = fals
 
 async function loadData() {
   try {
+    const res = await fetch(API_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
+    const payload = await res.json();
+    applyStatePayload(payload, { persistDefaults: true, sourceSignature: computeStateSignature(payload) });
+    apiOnline = true;
+    setConnectionStatus('', 'info');
+  } catch (err) {
+    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
+    apiOnline = false;
+    setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
+    applyStatePayload({ cards: [], ops: [], centers: [] });
+  }
+  stateDirty = false;
+
+  if (skipRender) {
+    pendingRender = true;
+    return;
+  }
+  renderEverything();
+}
+
+async function loadData() {
+  try {
     const res = await fetch(GET_STATE_ENDPOINT);
     if (res.status === 401) {
       showAuthOverlay();
@@ -1106,6 +1131,35 @@ function startPollingState() {
   }
   pollState();
   pollIntervalId = setInterval(pollState, 1000);
+}
+
+async function pollState() {
+  if (!currentUser) return;
+  if (stateDirty || saveInFlight) return;
+  try {
+    const res = await fetch(API_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) return;
+    const payload = await res.json();
+    const signature = computeStateSignature(payload);
+    if (signature && signature === lastStateSignature) return;
+    apiOnline = true;
+    applyStatePayload(payload, { skipRender: isTextInputActive(), sourceSignature: signature });
+    scheduleRenderIfPending();
+  } catch (err) {
+    apiOnline = false;
+  }
+}
+
+function startPollingState() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+  }
+  pollState();
+  pollIntervalId = setInterval(pollState, 3000);
 }
 
 // === РЕНДЕРИНГ ДАШБОРДА ===
@@ -2876,6 +2930,22 @@ function setupNavigation() {
   const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
   if (startBtn) {
     startBtn.click();
+  }
+}
+
+function activateNavTab(targetId = 'dashboard') {
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  let btn = navButtons.find(b => b.dataset.target === targetId && hasPermission(targetId, 'view'));
+  if (!btn) {
+    btn = navButtons.find(b => hasPermission(b.dataset.target, 'view')) || navButtons[0];
+  }
+  if (!btn) return;
+  if (btn.dataset.navBound !== '1') {
+    handleNavClick(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) {
+    btn.click();
   }
 }
 
