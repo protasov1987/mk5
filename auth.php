@@ -6,22 +6,34 @@ const BUILTIN_PASSWORD = 'ssyba';
 
 function get_json_payload(): array
 {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+
+    $data = [];
     $raw = file_get_contents('php://input');
     if ($raw !== false && trim($raw) !== '') {
         $decoded = json_decode($raw, true);
         if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-            return $decoded;
-        }
-        $parsed = [];
-        parse_str($raw, $parsed);
-        if (!empty($parsed)) {
-            return $parsed;
+            $data = $decoded;
+        } else {
+            $parsed = [];
+            parse_str($raw, $parsed);
+            if (!empty($parsed)) {
+                $data = $parsed;
+            }
         }
     }
+
     if (!empty($_POST)) {
-        return $_POST;
+        $data = array_merge($data, $_POST);
     }
-    return [];
+
+    if (empty($data) && !empty($_REQUEST)) {
+        $data = array_merge($data, $_REQUEST);
+    }
+
+    $cached = $data;
+    return $data;
 }
 
 function ensure_auth_schema(PDO $pdo): void
@@ -304,7 +316,8 @@ function save_user(PDO $pdo, array $payload, array $actor): array
     $id = isset($payload['id']) ? (int)$payload['id'] : null;
     $name = trim((string)($payload['name'] ?? ''));
     $password = isset($payload['password']) ? (string)$payload['password'] : '';
-    $levelId = isset($payload['level_id']) ? (int)$payload['level_id'] : null;
+    $levelRaw = $payload['level_id'] ?? null;
+    $levelId = ($levelRaw === '' || $levelRaw === null) ? null : (int)$levelRaw;
     $isActive = !empty($payload['is_active']) ? 1 : 0;
 
     if (empty($actor['is_builtin'])) {
