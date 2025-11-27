@@ -408,76 +408,79 @@ function delete_user(PDO $pdo, int $id, array $actor): void
 
 seed_default_admin($pdo);
 
-$action = $_GET['action'] ?? ($_POST['action'] ?? 'status');
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-header('Content-Type: application/json; charset=utf-8');
+$authEntry = realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__);
+if ($authEntry) {
+    $action = $_GET['action'] ?? ($_POST['action'] ?? 'status');
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    header('Content-Type: application/json; charset=utf-8');
 
-try {
-    if ($action === 'login' && $method === 'POST') {
-        handle_login($pdo);
-        exit;
+    try {
+        if ($action === 'login' && $method === 'POST') {
+            handle_login($pdo);
+            exit;
+        }
+
+        if ($action === 'logout' && $method === 'POST') {
+            handle_logout();
+            exit;
+        }
+
+        if ($action === 'status') {
+            $user = load_current_user($pdo);
+            echo json_encode(['user' => $user ? sanitize_user($user) : null]);
+            exit;
+        }
+
+        $user = require_login($pdo);
+
+        if ($action === 'users' && $method === 'GET') {
+            require_builtin_admin($user);
+            ensure_permission($user, 'users', 'view');
+            echo json_encode(['users' => fetch_users($pdo)]);
+            exit;
+        }
+
+        if ($action === 'save-user' && $method === 'POST') {
+            require_builtin_admin($user);
+            ensure_permission($user, 'users', 'edit');
+            $payload = get_json_payload();
+            $result = save_user($pdo, $payload, $user);
+            echo json_encode($result);
+            exit;
+        }
+
+        if ($action === 'delete-user' && $method === 'POST') {
+            require_builtin_admin($user);
+            ensure_permission($user, 'users', 'edit');
+            $payload = get_json_payload();
+            delete_user($pdo, (int)($payload['id'] ?? 0), $user);
+            echo json_encode(['status' => 'ok']);
+            exit;
+        }
+
+        if ($action === 'levels' && $method === 'GET') {
+            require_builtin_admin($user);
+            ensure_permission($user, 'access', 'view');
+            echo json_encode(['levels' => fetch_levels($pdo)]);
+            exit;
+        }
+
+        if ($action === 'save-level' && $method === 'POST') {
+            require_builtin_admin($user);
+            ensure_permission($user, 'access', 'edit');
+            $payload = get_json_payload();
+            $result = save_level($pdo, $payload);
+            echo json_encode($result);
+            exit;
+        }
+
+        http_response_code(400);
+        echo json_encode(['error' => 'Неизвестное действие']);
+    } catch (InvalidArgumentException $e) {
+        http_response_code(400);
+        echo json_encode(['error' => $e->getMessage()]);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['error' => $e->getMessage()]);
     }
-
-    if ($action === 'logout' && $method === 'POST') {
-        handle_logout();
-        exit;
-    }
-
-    if ($action === 'status') {
-        $user = load_current_user($pdo);
-        echo json_encode(['user' => $user ? sanitize_user($user) : null]);
-        exit;
-    }
-
-    $user = require_login($pdo);
-
-    if ($action === 'users' && $method === 'GET') {
-        require_builtin_admin($user);
-        ensure_permission($user, 'users', 'view');
-        echo json_encode(['users' => fetch_users($pdo)]);
-        exit;
-    }
-
-    if ($action === 'save-user' && $method === 'POST') {
-        require_builtin_admin($user);
-        ensure_permission($user, 'users', 'edit');
-        $payload = get_json_payload();
-        $result = save_user($pdo, $payload, $user);
-        echo json_encode($result);
-        exit;
-    }
-
-    if ($action === 'delete-user' && $method === 'POST') {
-        require_builtin_admin($user);
-        ensure_permission($user, 'users', 'edit');
-        $payload = get_json_payload();
-        delete_user($pdo, (int)($payload['id'] ?? 0), $user);
-        echo json_encode(['status' => 'ok']);
-        exit;
-    }
-
-    if ($action === 'levels' && $method === 'GET') {
-        require_builtin_admin($user);
-        ensure_permission($user, 'access', 'view');
-        echo json_encode(['levels' => fetch_levels($pdo)]);
-        exit;
-    }
-
-    if ($action === 'save-level' && $method === 'POST') {
-        require_builtin_admin($user);
-        ensure_permission($user, 'access', 'edit');
-        $payload = get_json_payload();
-        $result = save_level($pdo, $payload);
-        echo json_encode($result);
-        exit;
-    }
-
-    http_response_code(400);
-    echo json_encode(['error' => 'Неизвестное действие']);
-} catch (InvalidArgumentException $e) {
-    http_response_code(400);
-    echo json_encode(['error' => $e->getMessage()]);
-} catch (Throwable $e) {
-    http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()]);
 }

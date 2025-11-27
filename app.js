@@ -1,6 +1,8 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
 const API_ENDPOINT = 'api.php';
 const AUTH_ENDPOINT = 'auth.php';
+const GET_STATE_ENDPOINT = 'get_state.php';
+const UPDATE_STATE_ENDPOINT = 'update_state.php';
 
 let cards = [];
 let ops = [];
@@ -26,6 +28,12 @@ let currentPermissions = {};
 let knownUsers = [];
 let accessLevels = [];
 let cardModalReadonly = false;
+let saveTimerId = null;
+let pendingRender = false;
+let lastStateSignature = '';
+let pollIntervalId = null;
+
+const debounceDelay = 700;
 const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
 
 function setConnectionStatus(message, variant = 'info') {
@@ -84,6 +92,15 @@ async function performLogout() {
   currentPermissions = {};
   knownUsers = [];
   accessLevels = [];
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+  if (saveTimerId) {
+    clearTimeout(saveTimerId);
+    saveTimerId = null;
+  }
+  lastStateSignature = '';
 }
 
 function hasPermission(section, mode = 'view') {
@@ -199,6 +216,13 @@ async function ensureAuthenticated() {
   }
   showAuthOverlay();
   return false;
+}
+
+function isTextInputActive() {
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') return true;
+  return active.isContentEditable === true;
 }
 
 async function loadUsers() {
@@ -771,19 +795,31 @@ function ensureOperationCodes() {
   });
 }
 
-// === ХРАНИЛИЩЕ ===
-async function saveData() {
+// === ХРАНИЛИЩЕ И СИНХРОНИЗАЦИЯ ===
+function computeStateSignature(stateObj) {
   try {
-    if (!hasPermission('cards', 'edit')) {
-      setConnectionStatus('Нет прав для сохранения изменений.', 'error');
-      return;
-    }
-    if (!apiOnline) {
-      setConnectionStatus('Сервер недоступен — изменения не сохраняются. Проверьте, что запущен server.js.', 'error');
-      return;
-    }
+    return JSON.stringify(stateObj);
+  } catch (e) {
+    return '';
+  }
+}
 
-    const res = await fetch(API_ENDPOINT, {
+function scheduleRenderIfPending() {
+  if (pendingRender && !isTextInputActive()) {
+    pendingRender = false;
+    renderEverything();
+  }
+}
+
+async function pushStateNow() {
+  saveTimerId = null;
+  if (!hasPermission('cards', 'edit')) {
+    setConnectionStatus('Нет прав для сохранения изменений.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(UPDATE_STATE_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cards, ops, centers })
@@ -795,12 +831,25 @@ async function saveData() {
     if (!res.ok) {
       throw new Error('Ответ сервера ' + res.status);
     }
+    apiOnline = true;
     setConnectionStatus('', 'info');
+    lastStateSignature = computeStateSignature({ cards, ops, centers });
   } catch (err) {
     apiOnline = false;
     setConnectionStatus('Не удалось сохранить данные на сервер: ' + err.message, 'error');
     console.error('Ошибка сохранения данных на сервер', err);
   }
+}
+
+function saveData() {
+  if (!hasPermission('cards', 'edit')) {
+    setConnectionStatus('Нет прав для сохранения изменений.', 'error');
+    return;
+  }
+  if (saveTimerId) {
+    clearTimeout(saveTimerId);
+  }
+  saveTimerId = setTimeout(pushStateNow, debounceDelay);
 }
 
 function ensureDefaults() {
@@ -852,28 +901,10 @@ function ensureDefaults() {
   }
 }
 
-async function loadData() {
-  try {
-    const res = await fetch(API_ENDPOINT);
-    if (res.status === 401) {
-      showAuthOverlay();
-      return;
-    }
-    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
-    const payload = await res.json();
-    cards = Array.isArray(payload.cards) ? payload.cards : [];
-    ops = Array.isArray(payload.ops) ? payload.ops : [];
-    centers = Array.isArray(payload.centers) ? payload.centers : [];
-    apiOnline = true;
-    setConnectionStatus('', 'info');
-  } catch (err) {
-    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
-    apiOnline = false;
-    setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
-    cards = [];
-    ops = [];
-    centers = [];
-  }
+function applyStatePayload(payload, { skipRender = false, persistDefaults = false } = {}) {
+  cards = Array.isArray(payload.cards) ? payload.cards : [];
+  ops = Array.isArray(payload.ops) ? payload.ops : [];
+  centers = Array.isArray(payload.centers) ? payload.centers : [];
 
   ensureDefaults();
   ensureOperationCodes();
@@ -909,9 +940,68 @@ async function loadData() {
     recalcCardStatus(c);
   });
 
-  if (apiOnline) {
-    await saveData();
+  if (persistDefaults && apiOnline) {
+    saveData();
   }
+
+  const signature = computeStateSignature({ cards, ops, centers });
+  if (signature) {
+    lastStateSignature = signature;
+  }
+
+  if (skipRender) {
+    pendingRender = true;
+    return;
+  }
+  renderEverything();
+}
+
+async function loadData() {
+  try {
+    const res = await fetch(GET_STATE_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
+    const payload = await res.json();
+    applyStatePayload(payload, { persistDefaults: true });
+    apiOnline = true;
+    setConnectionStatus('', 'info');
+  } catch (err) {
+    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
+    apiOnline = false;
+    setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
+    applyStatePayload({ cards: [], ops: [], centers: [] });
+  }
+}
+
+async function pollState() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(GET_STATE_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) return;
+    const payload = await res.json();
+    const signature = computeStateSignature(payload);
+    if (signature && signature === lastStateSignature) return;
+    apiOnline = true;
+    applyStatePayload(payload, { skipRender: isTextInputActive() });
+    scheduleRenderIfPending();
+  } catch (err) {
+    apiOnline = false;
+  }
+}
+
+function startPollingState() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+  }
+  pollState();
+  pollIntervalId = setInterval(pollState, 1000);
 }
 
 // === РЕНДЕРИНГ ДАШБОРДА ===
@@ -3206,6 +3296,7 @@ function setupAuthUI() {
         await loadLevels();
         await loadUsers();
         await loadData();
+        startPollingState();
         const startTab = pickStartTab(user, 'dashboard');
         setupNavigation(startTab);
         setupCardsTabs();
@@ -3247,12 +3338,14 @@ function setupAuthUI() {
 // === ИНИЦИАЛИЗАЦИЯ ===
 document.addEventListener('DOMContentLoaded', async () => {
   startRealtimeClock();
+  document.addEventListener('focusout', () => setTimeout(scheduleRenderIfPending, 20), true);
   setupAuthUI();
   const ok = await ensureAuthenticated();
   if (ok) {
     await loadLevels();
     await loadUsers();
     await loadData();
+    startPollingState();
     const startTab = pickStartTab(currentUser, 'dashboard');
     setupNavigation(startTab);
     setupCardsTabs();
