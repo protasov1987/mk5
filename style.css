@@ -199,6 +199,7 @@ section.active {
   padding: 16px;
   margin-bottom: 16px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  overflow-x: auto;
 }
 
 h2 {
@@ -881,7 +882,38 @@ footer {
     align-items: flex-start;
   }
 
+  nav {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .nav-btn {
+    flex: 1 1 140px;
+    white-space: nowrap;
+  }
+
+  .user-box {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  main {
+    padding: 12px;
+  }
+
+  .card {
+    padding: 12px;
+  }
+
   table {
     font-size: 12px;
+    min-width: 620px;
+    display: block;
+    overflow-x: auto;
+  }
+
+  .modal-content {
+    width: 98%;
+    max-width: 640px;
   }
 }

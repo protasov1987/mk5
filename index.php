@@ -197,9 +197,6 @@
               <label>Уровень доступа
                 <select id="user-level"></select>
               </label>
-              <label class="flex" style="align-items:center; gap:8px;">
-                <input type="checkbox" id="user-active" checked /> Активен
-              </label>
               <div id="user-error" class="form-error"></div>
             </form>
           </div>

@@ -76,6 +76,9 @@ function seed_default_admin(PDO $pdo): void
 {
     ensure_auth_schema($pdo);
 
+    // Снимаем любые флаги деактивации, чтобы пользователи всегда оставались активными
+    $pdo->exec('UPDATE users SET is_active = 1');
+
     $count = (int)$pdo->query('SELECT COUNT(*) FROM access_levels')->fetchColumn();
     if ($count === 0) {
         $stmt = $pdo->prepare('INSERT INTO access_levels (name, description, default_tab, session_timeout) VALUES (:name, :desc, :tab, :timeout)');
@@ -146,7 +149,7 @@ function get_permissions(PDO $pdo, ?int $levelId): array
 function load_current_user(PDO $pdo): ?array
 {
     if (empty($_SESSION['user_id'])) return null;
-    $stmt = $pdo->prepare('SELECT u.*, l.name as level_name, l.default_tab, l.session_timeout FROM users u LEFT JOIN access_levels l ON l.id = u.level_id WHERE u.id = :id AND u.is_active = 1');
+    $stmt = $pdo->prepare('SELECT u.*, l.name as level_name, l.default_tab, l.session_timeout FROM users u LEFT JOIN access_levels l ON l.id = u.level_id WHERE u.id = :id');
     $stmt->execute(['id' => $_SESSION['user_id']]);
     $user = $stmt->fetch();
     if (!$user) return null;
@@ -213,7 +216,7 @@ function handle_login(PDO $pdo): void
 
     seed_default_admin($pdo);
 
-    $stmt = $pdo->prepare('SELECT u.*, l.name as level_name, l.default_tab, l.session_timeout FROM users u LEFT JOIN access_levels l ON l.id = u.level_id WHERE u.password_plain = :pass AND u.is_active = 1 LIMIT 1');
+    $stmt = $pdo->prepare('SELECT u.*, l.name as level_name, l.default_tab, l.session_timeout FROM users u LEFT JOIN access_levels l ON l.id = u.level_id WHERE u.password_plain = :pass LIMIT 1');
     $stmt->execute(['pass' => $password]);
     $user = $stmt->fetch();
     if (!$user || !password_verify($password, $user['password_hash'])) {
@@ -253,7 +256,7 @@ function handle_logout(): void
 
 function fetch_users(PDO $pdo): array
 {
-    $stmt = $pdo->query('SELECT u.id, u.name, u.level_id, u.is_active, u.is_builtin, l.name AS level_name FROM users u LEFT JOIN access_levels l ON l.id = u.level_id ORDER BY u.id ASC');
+    $stmt = $pdo->query('SELECT u.id, u.name, u.level_id, u.password_plain, u.is_builtin, l.name AS level_name FROM users u LEFT JOIN access_levels l ON l.id = u.level_id ORDER BY u.id ASC');
     return $stmt->fetchAll();
 }
 
@@ -318,7 +321,6 @@ function save_user(PDO $pdo, array $payload, array $actor): array
     $password = isset($payload['password']) ? (string)$payload['password'] : '';
     $levelRaw = $payload['level_id'] ?? null;
     $levelId = ($levelRaw === '' || $levelRaw === null) ? null : (int)$levelRaw;
-    $isActive = !empty($payload['is_active']) ? 1 : 0;
 
     if (empty($actor['is_builtin'])) {
         throw new InvalidArgumentException('Создавать и изменять пользователей может только Abyss');
@@ -359,12 +361,11 @@ function save_user(PDO $pdo, array $payload, array $actor): array
 
         if ($isBuiltin) {
             $name = BUILTIN_NAME;
-            $isActive = 1;
             $levelId = (int)$pdo->query('SELECT id FROM access_levels ORDER BY id ASC LIMIT 1')->fetchColumn();
         }
 
-        $baseSql = 'UPDATE users SET name = :name, level_id = :level_id, is_active = :active WHERE id = :id';
-        $params = ['name' => $name, 'level_id' => $levelId, 'active' => $isActive, 'id' => $id];
+        $baseSql = 'UPDATE users SET name = :name, level_id = :level_id, is_active = 1 WHERE id = :id';
+        $params = ['name' => $name, 'level_id' => $levelId, 'id' => $id];
         $pdo->prepare($baseSql)->execute($params);
 
         if ($password !== '') {
@@ -375,13 +376,12 @@ function save_user(PDO $pdo, array $payload, array $actor): array
             ]);
         }
     } else {
-        $stmt = $pdo->prepare('INSERT INTO users (name, password_hash, password_plain, level_id, is_active, is_builtin) VALUES (:name, :hash, :plain, :level, :active, 0)');
+        $stmt = $pdo->prepare('INSERT INTO users (name, password_hash, password_plain, level_id, is_active, is_builtin) VALUES (:name, :hash, :plain, :level, 1, 0)');
         $stmt->execute([
             'name' => $name,
             'hash' => password_hash($password, PASSWORD_DEFAULT),
             'plain' => $password,
             'level' => $levelId,
-            'active' => $isActive,
         ]);
         $id = (int)$pdo->lastInsertId();
     }

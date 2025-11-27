@@ -2932,13 +2932,12 @@ function renderUsers() {
   const rows = knownUsers.map(u => `<tr>
       <td>${escapeHtml(u.name)}</td>
       <td>${escapeHtml(u.level_name || '')}</td>
-      <td>${u.is_active ? 'Активен' : 'Отключен'}</td>
       <td>
         <button class="btn-small btn-secondary" data-edit-user="${u.id}">Изменить</button>
         ${u.is_builtin ? '' : `<button class="btn-small btn-danger" data-delete-user="${u.id}">Удалить</button>`}
       </td>
     </tr>`).join('');
-  wrapper.innerHTML = `<table class="table"><thead><tr><th>Имя</th><th>Уровень</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrapper.innerHTML = `<table class="table"><thead><tr><th>Имя</th><th>Уровень</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   wrapper.querySelectorAll('[data-edit-user]').forEach(btn => {
     btn.addEventListener('click', () => openUserModal(btn.dataset.editUser));
   });
@@ -2976,7 +2975,6 @@ function openUserModal(userId = null) {
   const nameInput = document.getElementById('user-name-input');
   const passInput = document.getElementById('user-password');
   const levelSelect = document.getElementById('user-level');
-  const activeChk = document.getElementById('user-active');
   const errorEl = document.getElementById('user-error');
   errorEl.textContent = '';
 
@@ -2986,9 +2984,8 @@ function openUserModal(userId = null) {
     title.textContent = 'Редактирование пользователя';
     idInput.value = user.id;
     nameInput.value = user.name || '';
-    passInput.value = '';
+    passInput.value = user.password_plain || '';
     levelSelect.value = user.level_id || '';
-    activeChk.checked = !!user.is_active;
     passInput.disabled = !!user.is_builtin;
   } else {
     title.textContent = 'Новый пользователь';
@@ -2996,7 +2993,6 @@ function openUserModal(userId = null) {
     nameInput.value = '';
     passInput.value = '';
     levelSelect.value = accessLevels[0]?.id || '';
-    activeChk.checked = true;
     passInput.disabled = false;
   }
 }
@@ -3010,7 +3006,6 @@ function closeUserModal() {
     const name = document.getElementById('user-name-input').value.trim();
     const password = document.getElementById('user-password').value;
     const levelId = document.getElementById('user-level').value || null;
-    const isActive = document.getElementById('user-active').checked;
     const errorEl = document.getElementById('user-error');
     errorEl.textContent = '';
 
@@ -3020,7 +3015,6 @@ function closeUserModal() {
       form.append('name', name);
       form.append('password', password);
       form.append('level_id', levelId || '');
-      form.append('is_active', isActive ? '1' : '0');
 
       const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
         method: 'POST',
