@@ -45,11 +45,25 @@ header h1 {
   font-size: 20px;
 }
 
+.user-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  flex-wrap: wrap;
+}
+
 nav {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   margin-left: auto;
+}
+
+.unauth nav,
+.unauth .user-box,
+.unauth main {
+  display: none;
 }
 
 .cards-toolbar {
@@ -126,6 +140,43 @@ nav {
 
 .hidden {
   display: none;
+}
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.auth-card {
+  background: #fff;
+  padding: 24px;
+  border-radius: 10px;
+  width: min(360px, 90vw);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.form-error {
+  color: #b91c1c;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.perm-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.perm-row strong {
+  min-width: 160px;
+  display: inline-block;
 }
 
 main {
