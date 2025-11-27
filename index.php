@@ -185,7 +185,7 @@
             <form id="user-form" class="flex-col">
               <input type="hidden" id="user-id" />
               <label>Имя пользователя
-                <input id="user-name" required />
+                <input id="user-name-input" required />
               </label>
               <label>Пароль
                 <div class="flex" style="align-items:flex-end; gap:8px;">

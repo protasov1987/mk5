@@ -24,7 +24,7 @@
         <button class="nav-btn" data-target="access">Уровни доступа</button>
     </nav>
     <div class="user-box">
-        <span id="user-name"></span>
+        <span id="user-display-name"></span>
         <button id="btn-logout" class="btn-secondary btn-small">Выход</button>
     </div>
 </header>

@@ -151,7 +151,7 @@ async function ensureAuthenticated() {
     if (user) {
       currentUser = user;
       currentPermissions = user.permissions || {};
-      const userNameEl = document.getElementById('user-name');
+      const userNameEl = document.getElementById('user-display-name');
       if (userNameEl) userNameEl.textContent = user.name || '';
       hideAuthOverlay();
       applyAccessUI();
@@ -2849,7 +2849,7 @@ function openUserModal(userId = null) {
   modal.classList.remove('hidden');
   const title = document.getElementById('user-modal-title');
   const idInput = document.getElementById('user-id');
-  const nameInput = document.getElementById('user-name');
+  const nameInput = document.getElementById('user-name-input');
   const passInput = document.getElementById('user-password');
   const levelSelect = document.getElementById('user-level');
   const activeChk = document.getElementById('user-active');
@@ -2883,7 +2883,7 @@ function closeUserModal() {
 
   async function saveUser() {
     const id = document.getElementById('user-id').value || null;
-    const name = document.getElementById('user-name').value.trim();
+    const name = document.getElementById('user-name-input').value.trim();
     const password = document.getElementById('user-password').value;
     const levelId = document.getElementById('user-level').value || null;
     const isActive = document.getElementById('user-active').checked;
@@ -3031,7 +3031,7 @@ function generatePassword() {
 
 function renderPasswordBarcode() {
   const value = document.getElementById('user-password').value || '';
-  const name = document.getElementById('user-name').value || '';
+  const name = document.getElementById('user-name-input').value || '';
   const container = document.getElementById('user-barcode');
   if (!container) return;
   container.innerHTML = '';
@@ -3082,7 +3082,7 @@ function setupAuthUI() {
         const { user } = await performLogin(pwd.value);
         currentUser = user;
         currentPermissions = user.permissions || {};
-        document.getElementById('user-name').textContent = user.name || '';
+        document.getElementById('user-display-name').textContent = user.name || '';
         hideAuthOverlay();
         applyAccessUI();
         await loadLevels();
