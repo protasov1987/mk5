@@ -13,6 +13,17 @@ $db_port = getenv('DB_PORT') ?: '3306';
 
 $dsn = "mysql:host={$db_host};port={$db_port};dbname={$db_name};charset=utf8mb4";
 
+// Версия статических файлов для принудительного обновления кэша браузера
+if (!defined('ASSET_VERSION')) {
+    $assetVersion = getenv('ASSET_VERSION');
+    if (!$assetVersion) {
+        $cssTime = @filemtime(__DIR__ . '/style.css') ?: 0;
+        $jsTime = @filemtime(__DIR__ . '/app.js') ?: 0;
+        $assetVersion = (string)max($cssTime, $jsTime, time());
+    }
+    define('ASSET_VERSION', $assetVersion);
+}
+
 try {
     $pdo = new PDO($dsn, $db_user, $db_pass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
