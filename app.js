@@ -2103,6 +2103,7 @@ function renderQuantityRow(card, op, { readonly = false, colspan = 9, blankForPr
 function renderWorkordersTable({ collapseAll = false } = {}) {
   const wrapper = document.getElementById('workorders-table-wrapper');
   const cardsWithOps = cards.filter(c => !c.archived && c.operations && c.operations.length);
+  const canEditWorkorders = hasPermission('workorders', 'edit');
   if (!cardsWithOps.length) {
     wrapper.innerHTML = '<p>Маршрутных операций пока нет.</p>';
     return;
@@ -2161,13 +2162,13 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
       '</div>' +
       '<div class="summary-actions">' +
       ' ' + stateBadge +
-      (canArchive ? ' <button type="button" class="btn-small btn-secondary archive-move-btn" data-card-id="' + card.id + '">Перенести в архив</button>' : '') +
+      (canArchive && canEditWorkorders ? ' <button type="button" class="btn-small btn-secondary archive-move-btn" data-card-id="' + card.id + '">Перенести в архив</button>' : '') +
       '</div>' +
       '</div>' +
       '</summary>';
 
     html += buildCardInfoBlock(card);
-    html += buildOperationsTable(card, { readonly: false });
+    html += buildOperationsTable(card, { readonly: !canEditWorkorders });
     html += '</details>';
   });
 
@@ -2215,159 +2216,163 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
     });
   });
 
-  wrapper.querySelectorAll('.archive-move-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-card-id');
-      const card = cards.find(c => c.id === id);
-      if (!card) return;
-      if (!card.archived) {
-        recordCardLog(card, { action: 'Архивирование', object: 'Карта', field: 'archived', oldValue: false, newValue: true });
-      }
-      card.archived = true;
-      saveData();
-      renderEverything();
+  if (canEditWorkorders) {
+    wrapper.querySelectorAll('.archive-move-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-card-id');
+        const card = cards.find(c => c.id === id);
+        if (!card) return;
+        if (!card.archived) {
+          recordCardLog(card, { action: 'Архивирование', object: 'Карта', field: 'archived', oldValue: false, newValue: true });
+        }
+        card.archived = true;
+        saveData();
+        renderEverything();
+      });
     });
-  });
+  }
 
-  wrapper.querySelectorAll('.comment-input').forEach(input => {
-    autoResizeComment(input);
-    const cardId = input.getAttribute('data-card-id');
-    const opId = input.getAttribute('data-op-id');
-    const card = cards.find(c => c.id === cardId);
-    const op = card ? (card.operations || []).find(o => o.id === opId) : null;
-    if (!op) return;
-
-    input.addEventListener('focus', () => {
-      input.dataset.prevComment = op.comment || '';
-    });
-
-    input.addEventListener('input', e => {
-      const value = (e.target.value || '').slice(0, 40);
-      e.target.value = value;
-      op.comment = value;
-      autoResizeComment(e.target);
-    });
-
-    input.addEventListener('blur', e => {
-      const value = (e.target.value || '').slice(0, 40);
-      e.target.value = value;
-      const prev = input.dataset.prevComment || '';
-      if (prev !== value) {
-        recordCardLog(card, { action: 'Комментарий', object: opLogLabel(op), field: 'comment', targetId: op.id, oldValue: prev, newValue: value });
-      }
-      op.comment = value;
-      saveData();
-      renderDashboard();
-    });
-  });
-
-  wrapper.querySelectorAll('.qty-input').forEach(input => {
-    const cardId = input.getAttribute('data-card-id');
-    const opId = input.getAttribute('data-op-id');
-    const type = input.getAttribute('data-qty-type');
-    const card = cards.find(c => c.id === cardId);
-    const op = card ? (card.operations || []).find(o => o.id === opId) : null;
-    if (!op || !card) return;
-
-    input.addEventListener('input', e => {
-      e.target.value = toSafeCount(e.target.value);
-    });
-
-    input.addEventListener('blur', e => {
-      const val = toSafeCount(e.target.value);
-      const fieldMap = { good: 'goodCount', scrap: 'scrapCount', hold: 'holdCount' };
-      const field = fieldMap[type] || null;
-      if (!field) return;
-      const prev = toSafeCount(op[field] || 0);
-      if (prev === val) return;
-      op[field] = val;
-      recordCardLog(card, { action: 'Количество деталей', object: opLogLabel(op), field, targetId: op.id, oldValue: prev, newValue: val });
-      saveData();
-      renderDashboard();
-    });
-  });
-
-  wrapper.querySelectorAll('button[data-action]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.getAttribute('data-action');
-      const cardId = btn.getAttribute('data-card-id');
-      const opId = btn.getAttribute('data-op-id');
+  if (canEditWorkorders) {
+    wrapper.querySelectorAll('.comment-input').forEach(input => {
+      autoResizeComment(input);
+      const cardId = input.getAttribute('data-card-id');
+      const opId = input.getAttribute('data-op-id');
       const card = cards.find(c => c.id === cardId);
-      if (!card) return;
-      const op = (card.operations || []).find(o => o.id === opId);
+      const op = card ? (card.operations || []).find(o => o.id === opId) : null;
       if (!op) return;
-      const detail = btn.closest('.wo-card');
-      if (detail && detail.open) {
-        workorderOpenCards.add(cardId);
-      }
 
-      const prevStatus = op.status;
-      const prevElapsed = op.elapsedSeconds || 0;
-      const prevCardStatus = card.status;
+      input.addEventListener('focus', () => {
+        input.dataset.prevComment = op.comment || '';
+      });
 
-      if (action === 'start') {
-        const now = Date.now();
-        if (!op.firstStartedAt) op.firstStartedAt = now;
-        op.status = 'IN_PROGRESS';
-        op.startedAt = now;
-        op.lastPausedAt = null;
-        op.finishedAt = null;
-        op.actualSeconds = null;
-        op.elapsedSeconds = 0;
-      } else if (action === 'pause') {
-        if (op.status === 'IN_PROGRESS') {
-          const now = Date.now();
-          const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
-          op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
-          op.lastPausedAt = now;
-          op.startedAt = null;
-          op.status = 'PAUSED';
-        }
-      } else if (action === 'resume') {
-        const now = Date.now();
-        if (op.status === 'DONE' && typeof op.elapsedSeconds !== 'number') {
-          op.elapsedSeconds = op.actualSeconds || 0;
-        }
-        if (!op.firstStartedAt) op.firstStartedAt = now;
-        op.status = 'IN_PROGRESS';
-        op.startedAt = now;
-        op.lastPausedAt = null;
-        op.finishedAt = null;
-      } else if (action === 'stop') {
-        const now = Date.now();
-        if (op.status === 'IN_PROGRESS') {
-          const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
-          op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
-        }
-        const qtyTotal = toSafeCount(card.quantity);
-        if (qtyTotal > 0) {
-          const sum = toSafeCount(op.goodCount || 0) + toSafeCount(op.scrapCount || 0) + toSafeCount(op.holdCount || 0);
-          if (sum !== qtyTotal) {
-            alert('Количество деталей не совпадает');
-            return;
-          }
-        }
-        op.startedAt = null;
-        op.finishedAt = now;
-        op.lastPausedAt = null;
-        op.actualSeconds = op.elapsedSeconds || 0;
-        op.status = 'DONE';
-      }
+      input.addEventListener('input', e => {
+        const value = (e.target.value || '').slice(0, 40);
+        e.target.value = value;
+        op.comment = value;
+        autoResizeComment(e.target);
+      });
 
-      recalcCardStatus(card);
-      if (prevStatus !== op.status) {
-        recordCardLog(card, { action: 'Статус операции', object: opLogLabel(op), field: 'status', targetId: op.id, oldValue: prevStatus, newValue: op.status });
-      }
-      if (prevElapsed !== op.elapsedSeconds && op.status === 'DONE') {
-        recordCardLog(card, { action: 'Факт. время', object: opLogLabel(op), field: 'elapsedSeconds', targetId: op.id, oldValue: Math.round(prevElapsed), newValue: Math.round(op.elapsedSeconds || 0) });
-      }
-      if (prevCardStatus !== card.status) {
-        recordCardLog(card, { action: 'Статус карты', object: 'Карта', field: 'status', oldValue: prevCardStatus, newValue: card.status });
-      }
-      saveData();
-      renderEverything();
+      input.addEventListener('blur', e => {
+        const value = (e.target.value || '').slice(0, 40);
+        e.target.value = value;
+        const prev = input.dataset.prevComment || '';
+        if (prev !== value) {
+          recordCardLog(card, { action: 'Комментарий', object: opLogLabel(op), field: 'comment', targetId: op.id, oldValue: prev, newValue: value });
+        }
+        op.comment = value;
+        saveData();
+        renderDashboard();
+      });
     });
-  });
+
+    wrapper.querySelectorAll('.qty-input').forEach(input => {
+      const cardId = input.getAttribute('data-card-id');
+      const opId = input.getAttribute('data-op-id');
+      const type = input.getAttribute('data-qty-type');
+      const card = cards.find(c => c.id === cardId);
+      const op = card ? (card.operations || []).find(o => o.id === opId) : null;
+      if (!op || !card) return;
+
+      input.addEventListener('input', e => {
+        e.target.value = toSafeCount(e.target.value);
+      });
+
+      input.addEventListener('blur', e => {
+        const val = toSafeCount(e.target.value);
+        const fieldMap = { good: 'goodCount', scrap: 'scrapCount', hold: 'holdCount' };
+        const field = fieldMap[type] || null;
+        if (!field) return;
+        const prev = toSafeCount(op[field] || 0);
+        if (prev === val) return;
+        op[field] = val;
+        recordCardLog(card, { action: 'Количество деталей', object: opLogLabel(op), field, targetId: op.id, oldValue: prev, newValue: val });
+        saveData();
+        renderDashboard();
+      });
+    });
+
+    wrapper.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.getAttribute('data-action');
+        const cardId = btn.getAttribute('data-card-id');
+        const opId = btn.getAttribute('data-op-id');
+        const card = cards.find(c => c.id === cardId);
+        if (!card) return;
+        const op = (card.operations || []).find(o => o.id === opId);
+        if (!op) return;
+        const detail = btn.closest('.wo-card');
+        if (detail && detail.open) {
+          workorderOpenCards.add(cardId);
+        }
+
+        const prevStatus = op.status;
+        const prevElapsed = op.elapsedSeconds || 0;
+        const prevCardStatus = card.status;
+
+        if (action === 'start') {
+          const now = Date.now();
+          if (!op.firstStartedAt) op.firstStartedAt = now;
+          op.status = 'IN_PROGRESS';
+          op.startedAt = now;
+          op.lastPausedAt = null;
+          op.finishedAt = null;
+          op.actualSeconds = null;
+          op.elapsedSeconds = 0;
+        } else if (action === 'pause') {
+          if (op.status === 'IN_PROGRESS') {
+            const now = Date.now();
+            const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
+            op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
+            op.lastPausedAt = now;
+            op.startedAt = null;
+            op.status = 'PAUSED';
+          }
+        } else if (action === 'resume') {
+          const now = Date.now();
+          if (op.status === 'DONE' && typeof op.elapsedSeconds !== 'number') {
+            op.elapsedSeconds = op.actualSeconds || 0;
+          }
+          if (!op.firstStartedAt) op.firstStartedAt = now;
+          op.status = 'IN_PROGRESS';
+          op.startedAt = now;
+          op.lastPausedAt = null;
+          op.finishedAt = null;
+        } else if (action === 'stop') {
+          const now = Date.now();
+          if (op.status === 'IN_PROGRESS') {
+            const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
+            op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
+          }
+          const qtyTotal = toSafeCount(card.quantity);
+          if (qtyTotal > 0) {
+            const sum = toSafeCount(op.goodCount || 0) + toSafeCount(op.scrapCount || 0) + toSafeCount(op.holdCount || 0);
+            if (sum !== qtyTotal) {
+              alert('Количество деталей не совпадает');
+              return;
+            }
+          }
+          op.startedAt = null;
+          op.finishedAt = now;
+          op.lastPausedAt = null;
+          op.actualSeconds = op.elapsedSeconds || 0;
+          op.status = 'DONE';
+        }
+
+        recalcCardStatus(card);
+        if (prevStatus !== op.status) {
+          recordCardLog(card, { action: 'Статус операции', object: opLogLabel(op), field: 'status', targetId: op.id, oldValue: prevStatus, newValue: op.status });
+        }
+        if (prevElapsed !== op.elapsedSeconds && op.status === 'DONE') {
+          recordCardLog(card, { action: 'Факт. время', object: opLogLabel(op), field: 'elapsedSeconds', targetId: op.id, oldValue: Math.round(prevElapsed), newValue: Math.round(op.elapsedSeconds || 0) });
+        }
+        if (prevCardStatus !== card.status) {
+          recordCardLog(card, { action: 'Статус карты', object: 'Карта', field: 'status', oldValue: prevCardStatus, newValue: card.status });
+        }
+        saveData();
+        renderEverything();
+      });
+    });
+  }
 }
 
 function renderArchiveTable() {
