@@ -2087,7 +2087,7 @@ function cardSearchScore(card, term) {
 
 function buildOperationsTable(card, { readonly = false, quantityPrintBlanks = false } = {}) {
   const opsSorted = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
-  let html = '<table><thead><tr>' +
+  let html = '<div class="wo-table-scroll"><table><thead><tr>' +
     '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Текущее / факт. время</th>' +
     (readonly ? '' : '<th>Действия</th>') +
     '<th>Комментарии</th>' +
@@ -2148,7 +2148,7 @@ function buildOperationsTable(card, { readonly = false, quantityPrintBlanks = fa
     html += renderQuantityRow(card, op, { readonly, colspan: readonly ? 9 : 10, blankForPrint: quantityPrintBlanks });
   });
 
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   return html;
 }
 

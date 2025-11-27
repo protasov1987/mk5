@@ -670,6 +670,15 @@ footer {
   border: 0;
 }
 
+.wo-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.wo-table-scroll table {
+  min-width: 900px;
+}
+
 .summary-line {
   display: flex;
   align-items: center;
