@@ -1,5 +1,8 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
-const API_ENDPOINT = '/api/data';
+const API_ENDPOINT = 'api.php';
+const AUTH_ENDPOINT = 'auth.php';
+const GET_STATE_ENDPOINT = 'get_state.php';
+const UPDATE_STATE_ENDPOINT = 'update_state.php';
 
 let cards = [];
 let ops = [];
@@ -20,6 +23,18 @@ const ATTACH_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar,.7z';
 const ATTACH_MAX_SIZE = 15 * 1024 * 1024; // 15 MB
 let logContextCardId = null;
 let clockIntervalId = null;
+let currentUser = null;
+let currentPermissions = {};
+let knownUsers = [];
+let accessLevels = [];
+let cardModalReadonly = false;
+let saveTimerId = null;
+let pendingRender = false;
+let lastStateSignature = '';
+let pollIntervalId = null;
+
+const debounceDelay = 700;
+const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
 
 function setConnectionStatus(message, variant = 'info') {
   const banner = document.getElementById('server-status');
@@ -46,6 +61,186 @@ function startRealtimeClock() {
   update();
   if (clockIntervalId) clearInterval(clockIntervalId);
   clockIntervalId = setInterval(update, 1000);
+}
+
+// === АВТОРИЗАЦИЯ ===
+async function fetchAuthStatus() {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=status`).catch(() => null);
+  if (!res || !res.ok) return { user: null };
+  return res.json();
+}
+
+async function performLogin(password) {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  }).catch(() => null);
+  if (!res) {
+    throw new Error('Нет соединения с сервером авторизации');
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || 'Ошибка авторизации');
+  }
+  return res.json();
+}
+
+async function performLogout() {
+  await fetch(`${AUTH_ENDPOINT}?action=logout`, { method: 'POST' }).catch(() => {});
+  currentUser = null;
+  currentPermissions = {};
+  knownUsers = [];
+  accessLevels = [];
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+  if (saveTimerId) {
+    clearTimeout(saveTimerId);
+    saveTimerId = null;
+  }
+  lastStateSignature = '';
+}
+
+function hasPermission(section, mode = 'view') {
+  const perms = currentPermissions[section];
+  if (!perms) return false;
+  if (mode === 'edit') return !!perms.edit;
+  return !!perms.view;
+}
+
+function canUploadAttachments() {
+  return !!(currentPermissions.attachments && currentPermissions.attachments.upload);
+}
+
+function canDeleteAttachments() {
+  return !!(currentPermissions.attachments && currentPermissions.attachments.delete);
+}
+
+function applyAccessUI() {
+  const navButtons = document.querySelectorAll('.nav-btn');
+  navButtons.forEach(btn => {
+    const target = btn.dataset.target;
+    if (!target) return;
+    const allowed = hasPermission(target, 'view');
+    btn.classList.toggle('hidden', !allowed);
+  });
+
+  SECTION_PERMS.forEach(sectionId => {
+    const sectionEl = document.getElementById(sectionId);
+    if (!sectionEl) return;
+    const canSee = hasPermission(sectionId, 'view');
+    sectionEl.classList.toggle('hidden', !canSee);
+  });
+
+  const uploadBtn = document.getElementById('attachments-add-btn');
+  if (uploadBtn) {
+    uploadBtn.classList.toggle('hidden', !(hasPermission('cards', 'edit') && canUploadAttachments()));
+  }
+
+  const canEditCards = hasPermission('cards', 'edit');
+  const newCardBtn = document.getElementById('btn-new-card');
+  if (newCardBtn) {
+    newCardBtn.disabled = !canEditCards;
+    newCardBtn.classList.toggle('disabled', !canEditCards);
+  }
+
+  const centerForm = document.getElementById('center-form');
+  if (centerForm) {
+    centerForm.querySelectorAll('input, textarea, button').forEach(el => {
+      el.disabled = !canEditCards;
+    });
+  }
+
+  const opForm = document.getElementById('op-form');
+  if (opForm) {
+    opForm.querySelectorAll('input, textarea, button').forEach(el => {
+      el.disabled = !canEditCards;
+    });
+  }
+
+  const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
+  const desiredStart = pickStartTab(currentUser, 'dashboard');
+  const startBtn = visibleButtons.find(btn => btn.dataset.target === desiredStart) || visibleButtons[0];
+  if (startBtn && !startBtn.classList.contains('active')) {
+    startBtn.click();
+  }
+}
+
+function pickStartTab(user, fallback = 'dashboard') {
+  if (!user) return fallback;
+  const desired = user.name === 'Abyss' ? 'dashboard' : (user.default_tab || fallback);
+  if (hasPermission(desired, 'view')) return desired;
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  const firstAllowed = navButtons.find(btn => hasPermission(btn.dataset.target, 'view'));
+  return firstAllowed?.dataset.target || fallback;
+}
+
+function showAuthOverlay() {
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+  document.querySelector('main')?.classList.add('hidden');
+  document.body?.classList.add('unauth');
+}
+
+function hideAuthOverlay() {
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+    overlay.style.display = 'none';
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+  document.querySelector('main')?.classList.remove('hidden');
+  document.body?.classList.remove('unauth');
+}
+
+async function ensureAuthenticated() {
+  try {
+    const { user } = await fetchAuthStatus();
+    if (user) {
+      currentUser = user;
+      currentPermissions = user.permissions || {};
+      const userNameEl = document.getElementById('user-display-name');
+      if (userNameEl) userNameEl.textContent = user.name || '';
+      hideAuthOverlay();
+      applyAccessUI();
+      return true;
+    }
+  } catch (err) {
+    console.warn('auth check failed', err);
+  }
+  showAuthOverlay();
+  return false;
+}
+
+function isTextInputActive() {
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') return true;
+  return active.isContentEditable === true;
+}
+
+async function loadUsers() {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=users`);
+  if (res.status === 401) { showAuthOverlay(); return; }
+  if (res.status === 403) { setConnectionStatus('Нет прав для просмотра пользователей', 'error'); return; }
+  const data = await res.json();
+  knownUsers = data.users || [];
+  renderUsers();
+}
+
+async function loadLevels() {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=levels`);
+  if (res.status === 401) { showAuthOverlay(); return; }
+  if (res.status === 403) { setConnectionStatus('Нет прав для просмотра уровней доступа', 'error'); return; }
+  const data = await res.json();
+  accessLevels = data.levels || [];
+  renderLevels();
 }
 
 // === УТИЛИТЫ ===
@@ -574,7 +769,7 @@ function ensureOperationCodes() {
   const used = collectUsedOpCodes();
   ops = ops.map(op => {
     const next = { ...op };
-    if (!next.code || used.has(next.code)) {
+    if (!next.code) {
       next.code = generateUniqueOpCode(used);
     }
     used.add(next.code);
@@ -590,7 +785,7 @@ function ensureOperationCodes() {
       if (source && source.code) {
         next.opCode = source.code;
       }
-      if (!next.opCode || used.has(next.opCode)) {
+      if (!next.opCode) {
         next.opCode = generateUniqueOpCode(used);
       }
       used.add(next.opCode);
@@ -600,28 +795,61 @@ function ensureOperationCodes() {
   });
 }
 
-// === ХРАНИЛИЩЕ ===
-async function saveData() {
+// === ХРАНИЛИЩЕ И СИНХРОНИЗАЦИЯ ===
+function computeStateSignature(stateObj) {
   try {
-    if (!apiOnline) {
-      setConnectionStatus('Сервер недоступен — изменения не сохраняются. Проверьте, что запущен server.js.', 'error');
-      return;
-    }
+    return JSON.stringify(stateObj);
+  } catch (e) {
+    return '';
+  }
+}
 
-    const res = await fetch(API_ENDPOINT, {
+function scheduleRenderIfPending() {
+  if (pendingRender && !isTextInputActive()) {
+    pendingRender = false;
+    renderEverything();
+  }
+}
+
+async function pushStateNow() {
+  saveTimerId = null;
+  if (!hasPermission('cards', 'edit')) {
+    setConnectionStatus('Нет прав для сохранения изменений.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(UPDATE_STATE_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cards, ops, centers })
     });
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
     if (!res.ok) {
       throw new Error('Ответ сервера ' + res.status);
     }
+    apiOnline = true;
     setConnectionStatus('', 'info');
+    lastStateSignature = computeStateSignature({ cards, ops, centers });
   } catch (err) {
     apiOnline = false;
     setConnectionStatus('Не удалось сохранить данные на сервер: ' + err.message, 'error');
     console.error('Ошибка сохранения данных на сервер', err);
   }
+}
+
+function saveData() {
+  if (!hasPermission('cards', 'edit')) {
+    setConnectionStatus('Нет прав для сохранения изменений.', 'error');
+    return;
+  }
+  if (saveTimerId) {
+    clearTimeout(saveTimerId);
+  }
+  saveTimerId = setTimeout(pushStateNow, debounceDelay);
 }
 
 function ensureDefaults() {
@@ -673,24 +901,10 @@ function ensureDefaults() {
   }
 }
 
-async function loadData() {
-  try {
-    const res = await fetch(API_ENDPOINT);
-    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
-    const payload = await res.json();
-    cards = Array.isArray(payload.cards) ? payload.cards : [];
-    ops = Array.isArray(payload.ops) ? payload.ops : [];
-    centers = Array.isArray(payload.centers) ? payload.centers : [];
-    apiOnline = true;
-    setConnectionStatus('', 'info');
-  } catch (err) {
-    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
-    apiOnline = false;
-    setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
-    cards = [];
-    ops = [];
-    centers = [];
-  }
+function applyStatePayload(payload, { skipRender = false, persistDefaults = false } = {}) {
+  cards = Array.isArray(payload.cards) ? payload.cards : [];
+  ops = Array.isArray(payload.ops) ? payload.ops : [];
+  centers = Array.isArray(payload.centers) ? payload.centers : [];
 
   ensureDefaults();
   ensureOperationCodes();
@@ -726,9 +940,68 @@ async function loadData() {
     recalcCardStatus(c);
   });
 
-  if (apiOnline) {
-    await saveData();
+  if (persistDefaults && apiOnline) {
+    saveData();
   }
+
+  const signature = computeStateSignature({ cards, ops, centers });
+  if (signature) {
+    lastStateSignature = signature;
+  }
+
+  if (skipRender) {
+    pendingRender = true;
+    return;
+  }
+  renderEverything();
+}
+
+async function loadData() {
+  try {
+    const res = await fetch(GET_STATE_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
+    const payload = await res.json();
+    applyStatePayload(payload, { persistDefaults: true });
+    apiOnline = true;
+    setConnectionStatus('', 'info');
+  } catch (err) {
+    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
+    apiOnline = false;
+    setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
+    applyStatePayload({ cards: [], ops: [], centers: [] });
+  }
+}
+
+async function pollState() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(GET_STATE_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) return;
+    const payload = await res.json();
+    const signature = computeStateSignature(payload);
+    if (signature && signature === lastStateSignature) return;
+    apiOnline = true;
+    applyStatePayload(payload, { skipRender: isTextInputActive() });
+    scheduleRenderIfPending();
+  } catch (err) {
+    apiOnline = false;
+  }
+}
+
+function startPollingState() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+  }
+  pollState();
+  pollIntervalId = setInterval(pollState, 1000);
 }
 
 // === РЕНДЕРИНГ ДАШБОРДА ===
@@ -841,6 +1114,7 @@ function renderDashboard() {
 function renderCardsTable() {
   const wrapper = document.getElementById('cards-table-wrapper');
   const visibleCards = cards.filter(c => !c.archived);
+  const canEditCards = hasPermission('cards', 'edit');
   if (!visibleCards.length) {
     wrapper.innerHTML = '<p>Список технологических карт пуст. Нажмите «Создать карту».</p>';
     return;
@@ -873,10 +1147,10 @@ function renderCardsTable() {
       '<td>' + (card.operations ? card.operations.length : 0) + '</td>' +
       '<td><button class="btn-small clip-btn" data-attach-card="' + card.id + '">📎 <span class="clip-count">' + filesCount + '</span></button></td>' +
       '<td><div class="table-actions">' +
-      '<button class="btn-small" data-action="edit-card" data-id="' + card.id + '">Открыть</button>' +
+      '<button class="btn-small" data-action="edit-card" data-id="' + card.id + '">' + (canEditCards ? 'Открыть' : 'Просмотр') + '</button>' +
       '<button class="btn-small" data-action="print-card" data-id="' + card.id + '">Печать</button>' +
-      '<button class="btn-small" data-action="copy-card" data-id="' + card.id + '">Копировать</button>' +
-      '<button class="btn-small btn-danger" data-action="delete-card" data-id="' + card.id + '">Удалить</button>' +
+      (canEditCards ? '<button class="btn-small" data-action="copy-card" data-id="' + card.id + '">Копировать</button>' : '') +
+      (canEditCards ? '<button class="btn-small btn-danger" data-action="delete-card" data-id="' + card.id + '">Удалить</button>' : '') +
       '</div></td>' +
       '</tr>';
   });
@@ -885,12 +1159,13 @@ function renderCardsTable() {
 
   wrapper.querySelectorAll('button[data-action="edit-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
-      openCardModal(btn.getAttribute('data-id'));
+      openCardModal(btn.getAttribute('data-id'), { readonly: !canEditCards });
     });
   });
 
   wrapper.querySelectorAll('button[data-action="copy-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (!hasPermission('cards', 'edit')) { setConnectionStatus('Нет прав для копирования карты', 'error'); return; }
       duplicateCard(btn.getAttribute('data-id'));
     });
   });
@@ -905,6 +1180,7 @@ function renderCardsTable() {
 
   wrapper.querySelectorAll('button[data-action="delete-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (!hasPermission('cards', 'edit')) { setConnectionStatus('Нет прав для удаления карты', 'error'); return; }
       const id = btn.getAttribute('data-id');
       cards = cards.filter(c => c.id !== id);
       saveData();
@@ -929,6 +1205,7 @@ function renderCardsTable() {
 }
 
 function duplicateCard(cardId) {
+  if (!hasPermission('cards', 'edit')) { return; }
   const card = cards.find(c => c.id === cardId);
   if (!card) return;
   const copy = cloneCard(card);
@@ -992,9 +1269,46 @@ function createEmptyCardDraft() {
   };
 }
 
-function openCardModal(cardId) {
+function setCardModalReadonlyState(readonly) {
+  cardModalReadonly = readonly;
+  const saveBtn = document.getElementById('card-save-btn');
+  const draftButton = document.getElementById('card-print-btn');
+  const cancelBtn = document.getElementById('card-cancel-btn');
+  const routeForm = document.getElementById('route-form');
+  const form = document.getElementById('card-form');
+  const header = document.getElementById('card-modal-title');
+
+  if (header) {
+    header.textContent = cardModalReadonly ? 'Просмотр карты' : (activeCardIsNew ? 'Создание карты' : 'Редактирование карты');
+  }
+
+  [saveBtn, draftButton].forEach(btn => {
+    if (btn) {
+      btn.disabled = cardModalReadonly;
+      btn.classList.toggle('hidden', cardModalReadonly && btn === saveBtn);
+    }
+  });
+  if (cancelBtn) {
+    cancelBtn.textContent = cardModalReadonly ? 'Закрыть' : 'Отмена';
+  }
+  if (routeForm) {
+    routeForm.classList.toggle('hidden', cardModalReadonly);
+  }
+  if (form) {
+    form.querySelectorAll('input, textarea').forEach(el => {
+      el.disabled = cardModalReadonly;
+    });
+  }
+}
+
+function openCardModal(cardId, { readonly = false } = {}) {
   const modal = document.getElementById('card-modal');
   if (!modal) return;
+  const canEditCards = hasPermission('cards', 'edit');
+  if (!cardId && !canEditCards) {
+    alert('Недостаточно прав для создания карты');
+    return;
+  }
   activeCardOriginalId = cardId || null;
   if (cardId) {
     const card = cards.find(c => c.id === cardId);
@@ -1005,8 +1319,8 @@ function openCardModal(cardId) {
     activeCardDraft = createEmptyCardDraft();
     activeCardIsNew = true;
   }
+  setCardModalReadonlyState(readonly || !canEditCards);
   ensureCardMeta(activeCardDraft, { skipSnapshot: activeCardIsNew });
-  document.getElementById('card-modal-title').textContent = activeCardIsNew ? 'Создание карты' : 'Редактирование карты';
   document.getElementById('card-id').value = activeCardDraft.id;
   document.getElementById('card-name').value = activeCardDraft.name || '';
   document.getElementById('card-qty').value = activeCardDraft.quantity != null ? activeCardDraft.quantity : '';
@@ -1042,7 +1356,7 @@ function closeCardModal() {
 }
 
 function saveCardDraft() {
-  if (!activeCardDraft) return;
+  if (!activeCardDraft || cardModalReadonly || !hasPermission('cards', 'edit')) return;
   const draft = cloneCard(activeCardDraft);
   draft.operations = (draft.operations || []).map((op, idx) => ({
     ...op,
@@ -1168,6 +1482,7 @@ function renderAttachmentsModal() {
   const list = document.getElementById('attachments-list');
   const uploadHint = document.getElementById('attachments-upload-hint');
   if (!card || !list || !title || !uploadHint) return;
+  const allowDelete = hasPermission('cards', 'edit') && canDeleteAttachments();
   ensureAttachments(card);
   title.textContent = card.name || card.barcode || 'Файлы карты';
   const files = card.attachments || [];
@@ -1178,17 +1493,17 @@ function renderAttachmentsModal() {
     files.forEach(file => {
       const date = new Date(file.createdAt || Date.now()).toLocaleString();
       const downloadAttr = attachmentContext.source === 'live'
-        ? 'href="/files/' + file.id + '" target="_blank" rel="noopener"'
+        ? 'href="files.php?id=' + file.id + '" target="_blank" rel="noopener"'
         : '';
+      const downloadBtn = attachmentContext.source === 'live'
+        ? '<a class="btn-small" ' + downloadAttr + '>Скачать</a>'
+        : '<button class="btn-small" data-download-id="' + file.id + '">Скачать</button>';
+      const deleteBtn = allowDelete ? '<button class="btn-small btn-danger" data-delete-id="' + file.id + '">Удалить</button>' : '';
       html += '<tr>' +
         '<td>' + escapeHtml(file.name || 'файл') + '</td>' +
         '<td>' + escapeHtml(formatBytes(file.size)) + '</td>' +
         '<td>' + escapeHtml(date) + '</td>' +
-        '<td><div class="table-actions">' +
-        (attachmentContext.source === 'live'
-          ? '<a class="btn-small" ' + downloadAttr + '>Скачать</a>'
-          : '<button class="btn-small" data-download-id="' + file.id + '">Скачать</button>') +
-        '</div></td>' +
+        '<td><div class="table-actions">' + downloadBtn + deleteBtn + '</div></td>' +
         '</tr>';
     });
     html += '</tbody></table>';
@@ -1213,11 +1528,36 @@ function renderAttachmentsModal() {
       });
     });
   }
+
+  if (allowDelete) {
+    list.querySelectorAll('button[data-delete-id]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-delete-id');
+        const cardRef = getAttachmentTargetCard();
+        if (!cardRef || !cardRef.attachments) return;
+        const beforeCount = cardRef.attachments.length;
+        cardRef.attachments = cardRef.attachments.filter(f => f.id !== id);
+        if (cardRef.attachments.length !== beforeCount) {
+          recordCardLog(cardRef, { action: 'Файлы', object: 'Карта', field: 'attachments', oldValue: beforeCount, newValue: cardRef.attachments.length });
+          if (attachmentContext.source === 'live') {
+            saveData();
+            renderEverything();
+          }
+          renderAttachmentsModal();
+          updateAttachmentCounters(cardRef.id);
+        }
+      });
+    });
+  }
 }
 
 async function addAttachmentsFromFiles(fileList) {
   const card = getAttachmentTargetCard();
   if (!card || !fileList || !fileList.length) return;
+  if (!(hasPermission('cards', 'edit') && canUploadAttachments())) {
+    alert('Недостаточно прав для загрузки файлов');
+    return;
+  }
   ensureAttachments(card);
   const beforeCount = card.attachments.length;
   const filesArray = Array.from(fileList);
@@ -1650,55 +1990,63 @@ function renderRouteTableDraft() {
     return;
   }
   const sortedOps = [...opsArr].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const readonly = cardModalReadonly;
   let html = '<table><thead><tr>' +
-    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Действия</th>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th>' +
+    (readonly ? '' : '<th>Действия</th>') +
     '</tr></thead><tbody>';
   sortedOps.forEach((o, index) => {
+    const executorCell = readonly
+      ? '<div>' + escapeHtml(o.executor || '') + '</div>'
+      : '<input class="executor-input" data-rop-id="' + o.id + '" value="' + escapeHtml(o.executor || '') + '" placeholder="ФИО" />';
+    const actionsCell = readonly ? '' : '<td><div class="table-actions">' +
+      '<button class="btn-small" data-action="move-up">↑</button>' +
+      '<button class="btn-small" data-action="move-down">↓</button>' +
+      '<button class="btn-small btn-danger" data-action="delete">Удалить</button>' +
+      '</div></td>';
     html += '<tr data-rop-id="' + o.id + '">' +
       '<td>' + (index + 1) + '</td>' +
       '<td>' + escapeHtml(o.centerName) + '</td>' +
       '<td>' + escapeHtml(o.opCode || '') + '</td>' +
       '<td>' + renderOpName(o) + '</td>' +
-      '<td><input class="executor-input" data-rop-id="' + o.id + '" value="' + escapeHtml(o.executor || '') + '" placeholder="ФИО" /></td>' +
+      '<td>' + executorCell + '</td>' +
       '<td>' + (o.plannedMinutes || '') + '</td>' +
       '<td>' + statusBadge(o.status) + '</td>' +
-      '<td><div class="table-actions">' +
-      '<button class="btn-small" data-action="move-up">↑</button>' +
-      '<button class="btn-small" data-action="move-down">↓</button>' +
-      '<button class="btn-small btn-danger" data-action="delete">Удалить</button>' +
-      '</div></td>' +
+      actionsCell +
       '</tr>';
   });
   html += '</tbody></table>';
   wrapper.innerHTML = html;
 
-  wrapper.querySelectorAll('tr[data-rop-id]').forEach(row => {
-    const ropId = row.getAttribute('data-rop-id');
-    row.querySelectorAll('button[data-action]').forEach(btn => {
-      const action = btn.getAttribute('data-action');
-      btn.addEventListener('click', () => {
-        if (!activeCardDraft) return;
-        if (action === 'delete') {
-          activeCardDraft.operations = activeCardDraft.operations.filter(o => o.id !== ropId);
-        } else if (action === 'move-up' || action === 'move-down') {
-          moveRouteOpInDraft(ropId, action === 'move-up' ? -1 : 1);
-        }
-        document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
-        renderRouteTableDraft();
+  if (!readonly) {
+    wrapper.querySelectorAll('tr[data-rop-id]').forEach(row => {
+      const ropId = row.getAttribute('data-rop-id');
+      row.querySelectorAll('button[data-action]').forEach(btn => {
+        const action = btn.getAttribute('data-action');
+        btn.addEventListener('click', () => {
+          if (!activeCardDraft) return;
+          if (action === 'delete') {
+            activeCardDraft.operations = activeCardDraft.operations.filter(o => o.id !== ropId);
+          } else if (action === 'move-up' || action === 'move-down') {
+            moveRouteOpInDraft(ropId, action === 'move-up' ? -1 : 1);
+          }
+          document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+          renderRouteTableDraft();
+        });
       });
     });
-  });
 
-  wrapper.querySelectorAll('.executor-input').forEach(input => {
-    input.addEventListener('input', e => {
-      const ropId = input.getAttribute('data-rop-id');
-      const value = (e.target.value || '').trim();
-      const op = activeCardDraft.operations.find(o => o.id === ropId);
-      if (!op) return;
-      op.executor = value;
-      document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+    wrapper.querySelectorAll('.executor-input').forEach(input => {
+      input.addEventListener('input', e => {
+        const ropId = input.getAttribute('data-rop-id');
+        const value = (e.target.value || '').trim();
+        const op = activeCardDraft.operations.find(o => o.id === ropId);
+        if (!op) return;
+        op.executor = value;
+        document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+      });
     });
-  });
+  }
 }
 
 function moveRouteOpInDraft(ropId, delta) {
@@ -1829,7 +2177,7 @@ function cardSearchScore(card, term) {
 
 function buildOperationsTable(card, { readonly = false, quantityPrintBlanks = false } = {}) {
   const opsSorted = [...(card.operations || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
-  let html = '<table><thead><tr>' +
+  let html = '<div class="wo-table-scroll"><table><thead><tr>' +
     '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Текущее / факт. время</th>' +
     (readonly ? '' : '<th>Действия</th>') +
     '<th>Комментарии</th>' +
@@ -1890,7 +2238,7 @@ function buildOperationsTable(card, { readonly = false, quantityPrintBlanks = fa
     html += renderQuantityRow(card, op, { readonly, colspan: readonly ? 9 : 10, blankForPrint: quantityPrintBlanks });
   });
 
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   return html;
 }
 
@@ -1957,6 +2305,8 @@ function renderQuantityRow(card, op, { readonly = false, colspan = 9, blankForPr
 function renderWorkordersTable({ collapseAll = false } = {}) {
   const wrapper = document.getElementById('workorders-table-wrapper');
   const cardsWithOps = cards.filter(c => !c.archived && c.operations && c.operations.length);
+  const canEditWorkorders = hasPermission('workorders', 'edit');
+  const canEditArchive = hasPermission('archive', 'edit');
   if (!cardsWithOps.length) {
     wrapper.innerHTML = '<p>Маршрутных операций пока нет.</p>';
     return;
@@ -1995,7 +2345,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
   filteredBySearch.forEach(card => {
     const opened = !collapseAll && workorderOpenCards.has(card.id);
     const stateBadge = renderCardStateBadge(card);
-    const canArchive = card.status === 'DONE';
+    const canArchive = card.status === 'DONE' && canEditWorkorders && canEditArchive;
     const filesCount = (card.attachments || []).length;
     const barcodeInline = card.barcode
       ? ' • № карты: <span class="summary-barcode">' + escapeHtml(card.barcode) + ' <button type="button" class="btn-small btn-secondary wo-barcode-btn" data-card-id="' + card.id + '">Штрихкод</button></span>'
@@ -2021,7 +2371,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
       '</summary>';
 
     html += buildCardInfoBlock(card);
-    html += buildOperationsTable(card, { readonly: false });
+    html += buildOperationsTable(card, { readonly: !canEditWorkorders });
     html += '</details>';
   });
 
@@ -2069,159 +2419,163 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
     });
   });
 
-  wrapper.querySelectorAll('.archive-move-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-card-id');
-      const card = cards.find(c => c.id === id);
-      if (!card) return;
-      if (!card.archived) {
-        recordCardLog(card, { action: 'Архивирование', object: 'Карта', field: 'archived', oldValue: false, newValue: true });
-      }
-      card.archived = true;
-      saveData();
-      renderEverything();
+  if (canEditWorkorders) {
+    wrapper.querySelectorAll('.archive-move-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-card-id');
+        const card = cards.find(c => c.id === id);
+        if (!card) return;
+        if (!card.archived) {
+          recordCardLog(card, { action: 'Архивирование', object: 'Карта', field: 'archived', oldValue: false, newValue: true });
+        }
+        card.archived = true;
+        saveData();
+        renderEverything();
+      });
     });
-  });
+  }
 
-  wrapper.querySelectorAll('.comment-input').forEach(input => {
-    autoResizeComment(input);
-    const cardId = input.getAttribute('data-card-id');
-    const opId = input.getAttribute('data-op-id');
-    const card = cards.find(c => c.id === cardId);
-    const op = card ? (card.operations || []).find(o => o.id === opId) : null;
-    if (!op) return;
-
-    input.addEventListener('focus', () => {
-      input.dataset.prevComment = op.comment || '';
-    });
-
-    input.addEventListener('input', e => {
-      const value = (e.target.value || '').slice(0, 40);
-      e.target.value = value;
-      op.comment = value;
-      autoResizeComment(e.target);
-    });
-
-    input.addEventListener('blur', e => {
-      const value = (e.target.value || '').slice(0, 40);
-      e.target.value = value;
-      const prev = input.dataset.prevComment || '';
-      if (prev !== value) {
-        recordCardLog(card, { action: 'Комментарий', object: opLogLabel(op), field: 'comment', targetId: op.id, oldValue: prev, newValue: value });
-      }
-      op.comment = value;
-      saveData();
-      renderDashboard();
-    });
-  });
-
-  wrapper.querySelectorAll('.qty-input').forEach(input => {
-    const cardId = input.getAttribute('data-card-id');
-    const opId = input.getAttribute('data-op-id');
-    const type = input.getAttribute('data-qty-type');
-    const card = cards.find(c => c.id === cardId);
-    const op = card ? (card.operations || []).find(o => o.id === opId) : null;
-    if (!op || !card) return;
-
-    input.addEventListener('input', e => {
-      e.target.value = toSafeCount(e.target.value);
-    });
-
-    input.addEventListener('blur', e => {
-      const val = toSafeCount(e.target.value);
-      const fieldMap = { good: 'goodCount', scrap: 'scrapCount', hold: 'holdCount' };
-      const field = fieldMap[type] || null;
-      if (!field) return;
-      const prev = toSafeCount(op[field] || 0);
-      if (prev === val) return;
-      op[field] = val;
-      recordCardLog(card, { action: 'Количество деталей', object: opLogLabel(op), field, targetId: op.id, oldValue: prev, newValue: val });
-      saveData();
-      renderDashboard();
-    });
-  });
-
-  wrapper.querySelectorAll('button[data-action]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.getAttribute('data-action');
-      const cardId = btn.getAttribute('data-card-id');
-      const opId = btn.getAttribute('data-op-id');
+  if (canEditWorkorders) {
+    wrapper.querySelectorAll('.comment-input').forEach(input => {
+      autoResizeComment(input);
+      const cardId = input.getAttribute('data-card-id');
+      const opId = input.getAttribute('data-op-id');
       const card = cards.find(c => c.id === cardId);
-      if (!card) return;
-      const op = (card.operations || []).find(o => o.id === opId);
+      const op = card ? (card.operations || []).find(o => o.id === opId) : null;
       if (!op) return;
-      const detail = btn.closest('.wo-card');
-      if (detail && detail.open) {
-        workorderOpenCards.add(cardId);
-      }
 
-      const prevStatus = op.status;
-      const prevElapsed = op.elapsedSeconds || 0;
-      const prevCardStatus = card.status;
+      input.addEventListener('focus', () => {
+        input.dataset.prevComment = op.comment || '';
+      });
 
-      if (action === 'start') {
-        const now = Date.now();
-        if (!op.firstStartedAt) op.firstStartedAt = now;
-        op.status = 'IN_PROGRESS';
-        op.startedAt = now;
-        op.lastPausedAt = null;
-        op.finishedAt = null;
-        op.actualSeconds = null;
-        op.elapsedSeconds = 0;
-      } else if (action === 'pause') {
-        if (op.status === 'IN_PROGRESS') {
-          const now = Date.now();
-          const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
-          op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
-          op.lastPausedAt = now;
-          op.startedAt = null;
-          op.status = 'PAUSED';
-        }
-      } else if (action === 'resume') {
-        const now = Date.now();
-        if (op.status === 'DONE' && typeof op.elapsedSeconds !== 'number') {
-          op.elapsedSeconds = op.actualSeconds || 0;
-        }
-        if (!op.firstStartedAt) op.firstStartedAt = now;
-        op.status = 'IN_PROGRESS';
-        op.startedAt = now;
-        op.lastPausedAt = null;
-        op.finishedAt = null;
-      } else if (action === 'stop') {
-        const now = Date.now();
-        if (op.status === 'IN_PROGRESS') {
-          const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
-          op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
-        }
-        const qtyTotal = toSafeCount(card.quantity);
-        if (qtyTotal > 0) {
-          const sum = toSafeCount(op.goodCount || 0) + toSafeCount(op.scrapCount || 0) + toSafeCount(op.holdCount || 0);
-          if (sum !== qtyTotal) {
-            alert('Количество деталей не совпадает');
-            return;
-          }
-        }
-        op.startedAt = null;
-        op.finishedAt = now;
-        op.lastPausedAt = null;
-        op.actualSeconds = op.elapsedSeconds || 0;
-        op.status = 'DONE';
-      }
+      input.addEventListener('input', e => {
+        const value = (e.target.value || '').slice(0, 40);
+        e.target.value = value;
+        op.comment = value;
+        autoResizeComment(e.target);
+      });
 
-      recalcCardStatus(card);
-      if (prevStatus !== op.status) {
-        recordCardLog(card, { action: 'Статус операции', object: opLogLabel(op), field: 'status', targetId: op.id, oldValue: prevStatus, newValue: op.status });
-      }
-      if (prevElapsed !== op.elapsedSeconds && op.status === 'DONE') {
-        recordCardLog(card, { action: 'Факт. время', object: opLogLabel(op), field: 'elapsedSeconds', targetId: op.id, oldValue: Math.round(prevElapsed), newValue: Math.round(op.elapsedSeconds || 0) });
-      }
-      if (prevCardStatus !== card.status) {
-        recordCardLog(card, { action: 'Статус карты', object: 'Карта', field: 'status', oldValue: prevCardStatus, newValue: card.status });
-      }
-      saveData();
-      renderEverything();
+      input.addEventListener('blur', e => {
+        const value = (e.target.value || '').slice(0, 40);
+        e.target.value = value;
+        const prev = input.dataset.prevComment || '';
+        if (prev !== value) {
+          recordCardLog(card, { action: 'Комментарий', object: opLogLabel(op), field: 'comment', targetId: op.id, oldValue: prev, newValue: value });
+        }
+        op.comment = value;
+        saveData();
+        renderDashboard();
+      });
     });
-  });
+
+    wrapper.querySelectorAll('.qty-input').forEach(input => {
+      const cardId = input.getAttribute('data-card-id');
+      const opId = input.getAttribute('data-op-id');
+      const type = input.getAttribute('data-qty-type');
+      const card = cards.find(c => c.id === cardId);
+      const op = card ? (card.operations || []).find(o => o.id === opId) : null;
+      if (!op || !card) return;
+
+      input.addEventListener('input', e => {
+        e.target.value = toSafeCount(e.target.value);
+      });
+
+      input.addEventListener('blur', e => {
+        const val = toSafeCount(e.target.value);
+        const fieldMap = { good: 'goodCount', scrap: 'scrapCount', hold: 'holdCount' };
+        const field = fieldMap[type] || null;
+        if (!field) return;
+        const prev = toSafeCount(op[field] || 0);
+        if (prev === val) return;
+        op[field] = val;
+        recordCardLog(card, { action: 'Количество деталей', object: opLogLabel(op), field, targetId: op.id, oldValue: prev, newValue: val });
+        saveData();
+        renderDashboard();
+      });
+    });
+
+    wrapper.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.getAttribute('data-action');
+        const cardId = btn.getAttribute('data-card-id');
+        const opId = btn.getAttribute('data-op-id');
+        const card = cards.find(c => c.id === cardId);
+        if (!card) return;
+        const op = (card.operations || []).find(o => o.id === opId);
+        if (!op) return;
+        const detail = btn.closest('.wo-card');
+        if (detail && detail.open) {
+          workorderOpenCards.add(cardId);
+        }
+
+        const prevStatus = op.status;
+        const prevElapsed = op.elapsedSeconds || 0;
+        const prevCardStatus = card.status;
+
+        if (action === 'start') {
+          const now = Date.now();
+          if (!op.firstStartedAt) op.firstStartedAt = now;
+          op.status = 'IN_PROGRESS';
+          op.startedAt = now;
+          op.lastPausedAt = null;
+          op.finishedAt = null;
+          op.actualSeconds = null;
+          op.elapsedSeconds = 0;
+        } else if (action === 'pause') {
+          if (op.status === 'IN_PROGRESS') {
+            const now = Date.now();
+            const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
+            op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
+            op.lastPausedAt = now;
+            op.startedAt = null;
+            op.status = 'PAUSED';
+          }
+        } else if (action === 'resume') {
+          const now = Date.now();
+          if (op.status === 'DONE' && typeof op.elapsedSeconds !== 'number') {
+            op.elapsedSeconds = op.actualSeconds || 0;
+          }
+          if (!op.firstStartedAt) op.firstStartedAt = now;
+          op.status = 'IN_PROGRESS';
+          op.startedAt = now;
+          op.lastPausedAt = null;
+          op.finishedAt = null;
+        } else if (action === 'stop') {
+          const now = Date.now();
+          if (op.status === 'IN_PROGRESS') {
+            const diff = op.startedAt ? (now - op.startedAt) / 1000 : 0;
+            op.elapsedSeconds = (op.elapsedSeconds || 0) + diff;
+          }
+          const qtyTotal = toSafeCount(card.quantity);
+          if (qtyTotal > 0) {
+            const sum = toSafeCount(op.goodCount || 0) + toSafeCount(op.scrapCount || 0) + toSafeCount(op.holdCount || 0);
+            if (sum !== qtyTotal) {
+              alert('Количество деталей не совпадает');
+              return;
+            }
+          }
+          op.startedAt = null;
+          op.finishedAt = now;
+          op.lastPausedAt = null;
+          op.actualSeconds = op.elapsedSeconds || 0;
+          op.status = 'DONE';
+        }
+
+        recalcCardStatus(card);
+        if (prevStatus !== op.status) {
+          recordCardLog(card, { action: 'Статус операции', object: opLogLabel(op), field: 'status', targetId: op.id, oldValue: prevStatus, newValue: op.status });
+        }
+        if (prevElapsed !== op.elapsedSeconds && op.status === 'DONE') {
+          recordCardLog(card, { action: 'Факт. время', object: opLogLabel(op), field: 'elapsedSeconds', targetId: op.id, oldValue: Math.round(prevElapsed), newValue: Math.round(op.elapsedSeconds || 0) });
+        }
+        if (prevCardStatus !== card.status) {
+          recordCardLog(card, { action: 'Статус карты', object: 'Карта', field: 'status', oldValue: prevCardStatus, newValue: card.status });
+        }
+        saveData();
+        renderEverything();
+      });
+    });
+  }
 }
 
 function renderArchiveTable() {
@@ -2373,12 +2727,17 @@ function tickTimers() {
 }
 
 // === НАВИГАЦИЯ ===
-function setupNavigation() {
+function setupNavigation(defaultTab = 'dashboard') {
   const navButtons = document.querySelectorAll('.nav-btn');
   navButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const target = btn.getAttribute('data-target');
       if (!target) return;
+      if (!hasPermission(target, 'view')) {
+        setConnectionStatus('Нет прав доступа', 'error');
+        return;
+      }
+      setConnectionStatus('', 'info');
 
       document.querySelectorAll('main section').forEach(sec => {
         sec.classList.remove('active');
@@ -2398,6 +2757,12 @@ function setupNavigation() {
       }
     });
   });
+
+  const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
+  const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
+  if (startBtn) {
+    startBtn.click();
+  }
 }
 
 function setupCardsTabs() {
@@ -2422,6 +2787,10 @@ function setupCardsTabs() {
 // === ФОРМЫ ===
 function setupForms() {
   document.getElementById('btn-new-card').addEventListener('click', () => {
+    if (!hasPermission('cards', 'edit')) {
+      setConnectionStatus('Нет прав для создания карты', 'error');
+      return;
+    }
     openCardModal();
   });
 
@@ -2458,7 +2827,7 @@ function setupForms() {
 
   document.getElementById('route-form').addEventListener('submit', e => {
     e.preventDefault();
-    if (!activeCardDraft) return;
+    if (!activeCardDraft || cardModalReadonly) return;
     const opId = document.getElementById('route-op').value;
     const centerId = document.getElementById('route-center').value;
     const executor = document.getElementById('route-executor').value.trim();
@@ -2488,6 +2857,7 @@ function setupForms() {
 
   document.getElementById('center-form').addEventListener('submit', e => {
     e.preventDefault();
+    if (!hasPermission('cards', 'edit')) return;
     const name = document.getElementById('center-name').value.trim();
     const desc = document.getElementById('center-desc').value.trim();
     if (!name) return;
@@ -2500,6 +2870,7 @@ function setupForms() {
 
       document.getElementById('op-form').addEventListener('submit', e => {
         e.preventDefault();
+        if (!hasPermission('cards', 'edit')) return;
         const codeInput = document.getElementById('op-code').value.trim();
         const name = document.getElementById('op-name').value.trim();
         const desc = document.getElementById('op-desc').value.trim();
@@ -2630,16 +3001,359 @@ function setupAttachmentControls() {
   }
 }
 
+// === ПОЛЬЗОВАТЕЛИ И УРОВНИ ДОСТУПА ===
+function renderUsers() {
+  const wrapper = document.getElementById('users-table');
+  const select = document.getElementById('user-level');
+  if (select) {
+    select.innerHTML = '';
+    accessLevels.forEach(level => {
+      const opt = document.createElement('option');
+      opt.value = level.id;
+      opt.textContent = `${level.name}`;
+      select.appendChild(opt);
+    });
+  }
+  if (!wrapper) return;
+  if (!knownUsers.length) {
+    wrapper.innerHTML = '<p>Пока нет пользователей.</p>';
+    return;
+  }
+  const rows = knownUsers.map(u => `<tr>
+      <td>${escapeHtml(u.name)}</td>
+      <td>${escapeHtml(u.level_name || '')}</td>
+      <td>
+        <button class="btn-small btn-secondary" data-edit-user="${u.id}">Изменить</button>
+        ${u.is_builtin ? '' : `<button class="btn-small btn-danger" data-delete-user="${u.id}">Удалить</button>`}
+      </td>
+    </tr>`).join('');
+  wrapper.innerHTML = `<table class="table"><thead><tr><th>Имя</th><th>Уровень</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrapper.querySelectorAll('[data-edit-user]').forEach(btn => {
+    btn.addEventListener('click', () => openUserModal(btn.dataset.editUser));
+  });
+  wrapper.querySelectorAll('[data-delete-user]').forEach(btn => {
+    btn.addEventListener('click', () => deleteUser(btn.dataset.deleteUser));
+  });
+}
+
+function renderLevels() {
+  const wrapper = document.getElementById('levels-table');
+  if (!wrapper) return;
+  if (!accessLevels.length) {
+    wrapper.innerHTML = '<p>Пока нет уровней доступа.</p>';
+    return;
+  }
+  const rows = accessLevels.map(l => `<tr>
+      <td>${escapeHtml(l.name)}</td>
+      <td>${escapeHtml(l.description || '')}</td>
+      <td>${escapeHtml(l.default_tab || '')}</td>
+      <td>${escapeHtml(String(l.session_timeout || 0))} мин</td>
+      <td><button class="btn-small btn-secondary" data-edit-level="${l.id}">Изменить</button></td>
+    </tr>`).join('');
+  wrapper.innerHTML = `<table class="table"><thead><tr><th>Название</th><th>Описание</th><th>Стартовая</th><th>Тайм-аут</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrapper.querySelectorAll('[data-edit-level]').forEach(btn => {
+    btn.addEventListener('click', () => openLevelModal(btn.dataset.editLevel));
+  });
+}
+
+function openUserModal(userId = null) {
+  const modal = document.getElementById('user-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const title = document.getElementById('user-modal-title');
+  const idInput = document.getElementById('user-id');
+  const nameInput = document.getElementById('user-name-input');
+  const passInput = document.getElementById('user-password');
+  const levelSelect = document.getElementById('user-level');
+  const errorEl = document.getElementById('user-error');
+  errorEl.textContent = '';
+
+  if (userId) {
+    const user = knownUsers.find(u => String(u.id) === String(userId));
+    if (!user) return;
+    title.textContent = 'Редактирование пользователя';
+    idInput.value = user.id;
+    nameInput.value = user.name || '';
+    passInput.value = user.password_plain || '';
+    levelSelect.value = user.level_id || '';
+    passInput.disabled = !!user.is_builtin;
+  } else {
+    title.textContent = 'Новый пользователь';
+    idInput.value = '';
+    nameInput.value = '';
+    passInput.value = '';
+    levelSelect.value = accessLevels[0]?.id || '';
+    passInput.disabled = false;
+  }
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal')?.classList.add('hidden');
+}
+
+  async function saveUser() {
+    const id = document.getElementById('user-id').value || null;
+    const name = document.getElementById('user-name-input').value.trim();
+    const password = document.getElementById('user-password').value;
+    const levelId = document.getElementById('user-level').value || null;
+    const errorEl = document.getElementById('user-error');
+    errorEl.textContent = '';
+
+    try {
+      const form = new FormData();
+      if (id) form.append('id', id);
+      form.append('name', name);
+      form.append('password', password);
+      form.append('level_id', levelId || '');
+
+      const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: form
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
+      closeUserModal();
+      await loadUsers();
+    } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+async function deleteUser(id) {
+  if (!confirm('Удалить пользователя?')) return;
+  await fetch(`${AUTH_ENDPOINT}?action=delete-user`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  loadUsers();
+}
+
+function openLevelModal(id = null) {
+  const modal = document.getElementById('level-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const title = document.getElementById('level-modal-title');
+  const idInput = document.getElementById('level-id');
+  const nameInput = document.getElementById('level-name');
+  const descInput = document.getElementById('level-desc');
+  const tabSelect = document.getElementById('level-default-tab');
+  const timeoutInput = document.getElementById('level-timeout');
+  const permsContainer = document.getElementById('level-perms');
+  const errorEl = document.getElementById('level-error');
+  errorEl.textContent = '';
+
+  const sections = [
+    { key: 'dashboard', label: 'Дашборд' },
+    { key: 'cards', label: 'Тех. карты' },
+    { key: 'workorders', label: 'Трекер' },
+    { key: 'archive', label: 'Архив' },
+    { key: 'attachments', label: 'Вложения (загрузка/удаление)' },
+    { key: 'users', label: 'Пользователи' },
+    { key: 'access', label: 'Уровни доступа' }
+  ];
+
+  let level = null;
+  if (id) {
+    level = accessLevels.find(l => String(l.id) === String(id));
+  }
+
+  title.textContent = level ? 'Редактирование уровня' : 'Новый уровень';
+  idInput.value = level?.id || '';
+  nameInput.value = level?.name || '';
+  descInput.value = level?.description || '';
+  tabSelect.value = level?.default_tab || 'dashboard';
+  timeoutInput.value = level?.session_timeout || 30;
+
+  permsContainer.innerHTML = sections.map(sec => {
+    const perm = level?.permissions?.[sec.key] || {};
+    return `<div class="perm-row">
+      <strong>${sec.label}</strong>
+      <label><input type="checkbox" data-perm-view="${sec.key}" ${perm.view ? 'checked' : ''}/> Просмотр</label>
+      <label><input type="checkbox" data-perm-edit="${sec.key}" ${perm.edit ? 'checked' : ''}/> Изменение</label>
+      ${sec.key === 'attachments' ? '<label><input type="checkbox" data-perm-upload="attachments" ' + (perm.upload ? 'checked' : '') + '/> Загрузка</label><label><input type="checkbox" data-perm-delete="attachments" ' + (perm.delete ? 'checked' : '') + '/> Удаление</label>' : ''}
+    </div>`;
+  }).join('');
+}
+
+function closeLevelModal() {
+  document.getElementById('level-modal')?.classList.add('hidden');
+}
+
+async function saveLevel() {
+  const id = document.getElementById('level-id').value || null;
+  const name = document.getElementById('level-name').value.trim();
+  const description = document.getElementById('level-desc').value.trim();
+  const default_tab = document.getElementById('level-default-tab').value;
+  const session_timeout = parseInt(document.getElementById('level-timeout').value || '30', 10);
+  const errorEl = document.getElementById('level-error');
+  errorEl.textContent = '';
+  const perms = {};
+  document.querySelectorAll('[data-perm-view]').forEach(chk => {
+    const key = chk.dataset.permView;
+    perms[key] = perms[key] || {};
+    perms[key].view = chk.checked;
+  });
+  document.querySelectorAll('[data-perm-edit]').forEach(chk => {
+    const key = chk.dataset.permEdit;
+    perms[key] = perms[key] || {};
+    perms[key].edit = chk.checked;
+  });
+  document.querySelectorAll('[data-perm-upload]').forEach(chk => {
+    const key = chk.dataset.permUpload;
+    perms[key] = perms[key] || {};
+    perms[key].upload = chk.checked;
+  });
+  document.querySelectorAll('[data-perm-delete]').forEach(chk => {
+    const key = chk.dataset.permDelete;
+    perms[key] = perms[key] || {};
+    perms[key].delete = chk.checked;
+  });
+
+  try {
+    const res = await fetch(`${AUTH_ENDPOINT}?action=save-level`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name, description, default_tab, session_timeout, permissions: perms })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Не удалось сохранить уровень');
+    closeLevelModal();
+    await loadLevels();
+    await loadUsers();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz0123456789';
+  let pass = '';
+  while (pass.length < 8) {
+    pass += chars[Math.floor(Math.random() * chars.length)];
+  }
+  document.getElementById('user-password').value = pass;
+  renderPasswordBarcode();
+}
+
+function renderPasswordBarcode() {
+  const value = document.getElementById('user-password').value || '';
+  const name = document.getElementById('user-name-input').value || '';
+  const container = document.getElementById('user-barcode');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!value) return;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  container.appendChild(svg);
+  try {
+    JsBarcode(svg, value, { format: 'CODE128', displayValue: true });
+    document.getElementById('user-barcode-name').textContent = name ? `Пользователь: ${name}` : '';
+  } catch (e) {
+    container.textContent = 'Не удалось построить штрихкод';
+  }
+}
+
+function openBarcodeModal() {
+  renderPasswordBarcode();
+  document.getElementById('user-barcode-modal')?.classList.remove('hidden');
+}
+
+function closeBarcodeModal() {
+  document.getElementById('user-barcode-modal')?.classList.add('hidden');
+}
+
+function printPasswordBarcode() {
+  renderPasswordBarcode();
+  const container = document.getElementById('user-barcode');
+  const name = document.getElementById('user-barcode-name').textContent || '';
+  const win = window.open('', '_blank');
+  win.document.write('<html><head><title>Штрихкод</title></head><body>');
+  win.document.write(container.innerHTML);
+  win.document.write(`<p>${escapeHtml(name)}</p>`);
+  win.document.write('</body></html>');
+  win.document.close();
+  win.focus();
+  win.print();
+  win.close();
+}
+
+function setupAuthUI() {
+  const form = document.getElementById('auth-form');
+  const pwd = document.getElementById('auth-password');
+  const errorEl = document.getElementById('auth-error');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.textContent = '';
+      try {
+        const { user } = await performLogin(pwd.value);
+        currentUser = user;
+        currentPermissions = user.permissions || {};
+        document.getElementById('user-display-name').textContent = user.name || '';
+        hideAuthOverlay();
+        applyAccessUI();
+        await loadLevels();
+        await loadUsers();
+        await loadData();
+        startPollingState();
+        const startTab = pickStartTab(user, 'dashboard');
+        setupNavigation(startTab);
+        setupCardsTabs();
+        setupForms();
+        setupBarcodeModal();
+        setupAttachmentControls();
+        setupLogModal();
+        renderEverything();
+        setInterval(tickTimers, 1000);
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    });
+  }
+
+  const logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      await performLogout();
+      showAuthOverlay();
+    });
+  }
+
+  const newUserBtn = document.getElementById('btn-new-user');
+  if (newUserBtn) newUserBtn.addEventListener('click', () => openUserModal());
+  document.getElementById('user-cancel')?.addEventListener('click', closeUserModal);
+  document.getElementById('user-save')?.addEventListener('click', saveUser);
+  document.getElementById('btn-gen-pass')?.addEventListener('click', generatePassword);
+  document.getElementById('btn-pass-barcode')?.addEventListener('click', openBarcodeModal);
+  document.getElementById('user-barcode-close')?.addEventListener('click', closeBarcodeModal);
+  document.getElementById('user-barcode-print')?.addEventListener('click', printPasswordBarcode);
+
+  const newLevelBtn = document.getElementById('btn-new-level');
+  if (newLevelBtn) newLevelBtn.addEventListener('click', () => openLevelModal());
+  document.getElementById('level-cancel')?.addEventListener('click', closeLevelModal);
+  document.getElementById('level-save')?.addEventListener('click', saveLevel);
+}
+
 // === ИНИЦИАЛИЗАЦИЯ ===
 document.addEventListener('DOMContentLoaded', async () => {
   startRealtimeClock();
-  await loadData();
-  setupNavigation();
-  setupCardsTabs();
-  setupForms();
-  setupBarcodeModal();
-  setupAttachmentControls();
-  setupLogModal();
-  renderEverything();
-  setInterval(tickTimers, 1000);
+  document.addEventListener('focusout', () => setTimeout(scheduleRenderIfPending, 20), true);
+  setupAuthUI();
+  const ok = await ensureAuthenticated();
+  if (ok) {
+    await loadLevels();
+    await loadUsers();
+    await loadData();
+    startPollingState();
+    const startTab = pickStartTab(currentUser, 'dashboard');
+    setupNavigation(startTab);
+    setupCardsTabs();
+    setupForms();
+    setupBarcodeModal();
+    setupAttachmentControls();
+    setupLogModal();
+    renderEverything();
+    setInterval(tickTimers, 1000);
+  }
 });
