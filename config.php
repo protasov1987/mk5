@@ -6,8 +6,8 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // Настройки базы данных для Timeweb
 $db_host = getenv('DB_HOST') ?: 'localhost';
-$db_name = getenv('DB_NAME') ?: 'cc226439_bd';
-$db_user = getenv('DB_USER') ?: 'cc226439_bd';
+$db_name = getenv('DB_NAME') ?: 'cc226439_1';
+$db_user = getenv('DB_USER') ?: 'cc226439_1';
 $db_pass = getenv('DB_PASS') ?: '12345';
 $db_port = getenv('DB_PORT') ?: '3306';
 

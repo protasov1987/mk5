@@ -769,7 +769,7 @@ function ensureOperationCodes() {
   const used = collectUsedOpCodes();
   ops = ops.map(op => {
     const next = { ...op };
-    if (!next.code || used.has(next.code)) {
+    if (!next.code) {
       next.code = generateUniqueOpCode(used);
     }
     used.add(next.code);
@@ -785,7 +785,7 @@ function ensureOperationCodes() {
       if (source && source.code) {
         next.opCode = source.code;
       }
-      if (!next.opCode || used.has(next.opCode)) {
+      if (!next.opCode) {
         next.opCode = generateUniqueOpCode(used);
       }
       used.add(next.opCode);

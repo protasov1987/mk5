@@ -193,7 +193,7 @@ function ensure_operation_codes(array &$data): void
             if ($source && isset($opMap[$source]['code'])) {
                 $operation['opCode'] = $opMap[$source]['code'];
             }
-            if (empty($operation['opCode']) || in_array($operation['opCode'], $used, true)) {
+            if (empty($operation['opCode'])) {
                 $operation['opCode'] = generate_unique_op_code($used);
             }
             $used[] = $operation['opCode'];
