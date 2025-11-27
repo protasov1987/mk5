@@ -2881,26 +2881,33 @@ function closeUserModal() {
   document.getElementById('user-modal')?.classList.add('hidden');
 }
 
-async function saveUser() {
-  const id = document.getElementById('user-id').value || null;
-  const name = document.getElementById('user-name').value.trim();
-  const password = document.getElementById('user-password').value;
-  const levelId = document.getElementById('user-level').value || null;
-  const isActive = document.getElementById('user-active').checked;
-  const errorEl = document.getElementById('user-error');
-  errorEl.textContent = '';
+  async function saveUser() {
+    const id = document.getElementById('user-id').value || null;
+    const name = document.getElementById('user-name').value.trim();
+    const password = document.getElementById('user-password').value;
+    const levelId = document.getElementById('user-level').value || null;
+    const isActive = document.getElementById('user-active').checked;
+    const errorEl = document.getElementById('user-error');
+    errorEl.textContent = '';
 
-  try {
-    const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name, password, level_id: levelId, is_active: isActive })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
-    closeUserModal();
-    await loadUsers();
-  } catch (err) {
+    try {
+      const form = new URLSearchParams();
+      if (id) form.append('id', id);
+      form.append('name', name);
+      form.append('password', password);
+      form.append('level_id', levelId || '');
+      if (isActive) form.append('is_active', '1');
+
+      const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: form.toString()
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
+      closeUserModal();
+      await loadUsers();
+    } catch (err) {
     errorEl.textContent = err.message;
   }
 }
