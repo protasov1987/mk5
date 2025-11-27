@@ -37,6 +37,10 @@ let uiBound = false;
 let stateDirty = false;
 let saveInFlight = false;
 
+function nowMs() {
+  return Date.now();
+}
+
 const debounceDelay = 700;
 const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
 
@@ -347,7 +351,8 @@ function ensureAttachments(card) {
     type: file.type || 'application/octet-stream',
     size: typeof file.size === 'number' ? file.size : 0,
     content: typeof file.content === 'string' ? file.content : '',
-    createdAt: file.createdAt || Date.now()
+    createdAt: file.createdAt || nowMs(),
+    updatedAt: typeof file.updatedAt === 'number' ? file.updatedAt : (file.createdAt || nowMs())
   }));
 }
 
@@ -358,7 +363,10 @@ function ensureCardMeta(card, options = {}) {
   if (typeof card.drawing !== 'string') card.drawing = card.drawing ? String(card.drawing) : '';
   if (typeof card.material !== 'string') card.material = card.material ? String(card.material) : '';
   if (typeof card.createdAt !== 'number') {
-    card.createdAt = Date.now();
+    card.createdAt = nowMs();
+  }
+  if (typeof card.updatedAt !== 'number') {
+    card.updatedAt = card.createdAt;
   }
   if (!Array.isArray(card.logs)) {
     card.logs = [];
@@ -390,9 +398,14 @@ function formatLogValue(val) {
 function recordCardLog(card, { action, object, field = null, targetId = null, oldValue = '', newValue = '' }) {
   if (!card) return;
   ensureCardMeta(card);
+  touchCard(card);
+  if (targetId && Array.isArray(card.operations)) {
+    const op = card.operations.find(o => o.id === targetId);
+    if (op) touchOperation(op);
+  }
   card.logs.push({
     id: genId('log'),
-    ts: Date.now(),
+    ts: nowMs(),
     action: action || 'update',
     object: object || '',
     field,
@@ -400,6 +413,26 @@ function recordCardLog(card, { action, object, field = null, targetId = null, ol
     oldValue: formatLogValue(oldValue),
     newValue: formatLogValue(newValue)
   });
+}
+
+function touchCard(card) {
+  if (!card) return;
+  card.updatedAt = nowMs();
+}
+
+function touchOperation(op) {
+  if (!op) return;
+  op.updatedAt = nowMs();
+}
+
+function touchCenter(center) {
+  if (!center) return;
+  center.updatedAt = nowMs();
+}
+
+function touchOpDirectory(op) {
+  if (!op) return;
+  op.updatedAt = nowMs();
 }
 
 function opLogLabel(op) {
@@ -631,7 +664,8 @@ function createRouteOpFromRefs(op, center, executor, plannedMinutes, order) {
     comment: '',
     goodCount: 0,
     scrapCount: 0,
-    holdCount: 0
+    holdCount: 0,
+    updatedAt: nowMs()
   };
 }
 
@@ -851,6 +885,7 @@ async function pushStateNow() {
   } finally {
     saveInFlight = false;
   }
+  saveTimerId = setTimeout(pushStateNow, debounceDelay);
 }
 
 function saveData() {
@@ -865,32 +900,21 @@ function saveData() {
   saveTimerId = setTimeout(pushStateNow, debounceDelay);
 }
 
-function saveData() {
-  if (!hasPermission('cards', 'edit')) {
-    setConnectionStatus('Нет прав для сохранения изменений.', 'error');
-    return;
-  }
-  if (saveTimerId) {
-    clearTimeout(saveTimerId);
-  }
-  saveTimerId = setTimeout(pushStateNow, debounceDelay);
-}
-
 function ensureDefaults() {
   if (!centers.length) {
     centers = [
-      { id: genId('wc'), name: 'Механическая обработка', desc: 'Токарные и фрезерные операции' },
-      { id: genId('wc'), name: 'Покрытия / напыление', desc: 'Покрытия, термическое напыление' },
-      { id: genId('wc'), name: 'Контроль качества', desc: 'Измерения, контроль, визуальный осмотр' }
+      { id: genId('wc'), name: 'Механическая обработка', desc: 'Токарные и фрезерные операции', updatedAt: nowMs() },
+      { id: genId('wc'), name: 'Покрытия / напыление', desc: 'Покрытия, термическое напыление', updatedAt: nowMs() },
+      { id: genId('wc'), name: 'Контроль качества', desc: 'Измерения, контроль, визуальный осмотр', updatedAt: nowMs() }
     ];
   }
 
   if (!ops.length) {
     const used = new Set();
     ops = [
-      { id: genId('op'), code: generateUniqueOpCode(used), name: 'Токарная обработка', desc: 'Черновая и чистовая', recTime: 40 },
-      { id: genId('op'), code: generateUniqueOpCode(used), name: 'Напыление покрытия', desc: 'HVOF / APS', recTime: 60 },
-      { id: genId('op'), code: generateUniqueOpCode(used), name: 'Контроль размеров', desc: 'Измерения, оформление протокола', recTime: 20 }
+      { id: genId('op'), code: generateUniqueOpCode(used), name: 'Токарная обработка', desc: 'Черновая и чистовая', recTime: 40, updatedAt: nowMs() },
+      { id: genId('op'), code: generateUniqueOpCode(used), name: 'Напыление покрытия', desc: 'HVOF / APS', recTime: 60, updatedAt: nowMs() },
+      { id: genId('op'), code: generateUniqueOpCode(used), name: 'Контроль размеров', desc: 'Измерения, оформление протокола', recTime: 20, updatedAt: nowMs() }
     ];
   }
 
@@ -930,10 +954,21 @@ function applyStatePayload(payload, { skipRender = false, persistDefaults = fals
   ops = Array.isArray(payload.ops) ? payload.ops : [];
   centers = Array.isArray(payload.centers) ? payload.centers : [];
 
+  const stampIfMissing = (item) => {
+    if (!item) return;
+    if (typeof item.updatedAt !== 'number') {
+      item.updatedAt = nowMs();
+    }
+  };
+
+  ops.forEach(stampIfMissing);
+  centers.forEach(stampIfMissing);
+
   ensureDefaults();
   ensureOperationCodes();
 
   cards.forEach(c => {
+    stampIfMissing(c);
     if (!c.barcode || !/^\d{13}$/.test(c.barcode)) {
       c.barcode = generateUniqueEAN13();
     }
@@ -942,6 +977,7 @@ function applyStatePayload(payload, { skipRender = false, persistDefaults = fals
     ensureCardMeta(c);
     c.operations = c.operations || [];
     c.operations.forEach(op => {
+      stampIfMissing(op);
       if (typeof op.elapsedSeconds !== 'number') {
         op.elapsedSeconds = 0;
       }
@@ -999,6 +1035,56 @@ async function loadData() {
     setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
     applyStatePayload({ cards: [], ops: [], centers: [] });
   }
+  renderEverything();
+}
+
+async function loadData() {
+  try {
+    const res = await fetch(GET_STATE_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) throw new Error('Ответ сервера ' + res.status);
+    const payload = await res.json();
+    applyStatePayload(payload, { persistDefaults: true });
+    apiOnline = true;
+    setConnectionStatus('', 'info');
+  } catch (err) {
+    console.warn('Не удалось загрузить данные с сервера, используем пустые коллекции', err);
+    apiOnline = false;
+    setConnectionStatus('Нет соединения с сервером: данные будут только в этой сессии', 'error');
+    applyStatePayload({ cards: [], ops: [], centers: [] });
+  }
+}
+
+async function pollState() {
+  if (!currentUser) return;
+  if (stateDirty || saveInFlight) return;
+  try {
+    const res = await fetch(GET_STATE_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
+    if (!res.ok) return;
+    const payload = await res.json();
+    const signature = computeStateSignature(payload);
+    if (signature && signature === lastStateSignature) return;
+    apiOnline = true;
+    applyStatePayload(payload, { skipRender: isTextInputActive() });
+    scheduleRenderIfPending();
+  } catch (err) {
+    apiOnline = false;
+  }
+}
+
+function startPollingState() {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+  }
+  pollState();
+  pollIntervalId = setInterval(pollState, 1000);
 }
 
 async function pollState() {
@@ -1241,12 +1327,14 @@ function duplicateCard(cardId) {
   copy.status = 'NOT_STARTED';
   copy.archived = false;
   copy.logs = [];
-  copy.createdAt = Date.now();
+  copy.createdAt = nowMs();
+  copy.updatedAt = copy.createdAt;
   copy.initialSnapshot = null;
   copy.attachments = (copy.attachments || []).map(file => ({
     ...file,
     id: genId('file'),
-    createdAt: Date.now()
+    createdAt: nowMs(),
+    updatedAt: nowMs()
   }));
   copy.operations = (copy.operations || []).map((op, idx) => ({
     ...op,
@@ -1287,7 +1375,8 @@ function createEmptyCardDraft() {
     desc: '',
     status: 'NOT_STARTED',
     archived: false,
-    createdAt: Date.now(),
+    createdAt: nowMs(),
+    updatedAt: nowMs(),
     logs: [],
     initialSnapshot: null,
     attachments: [],
@@ -1612,7 +1701,8 @@ async function addAttachmentsFromFiles(fileList) {
       type: file.type || 'application/octet-stream',
       size: file.size,
       content: dataUrl,
-      createdAt: Date.now()
+      createdAt: nowMs(),
+      updatedAt: nowMs()
     });
   }
 
@@ -2711,7 +2801,8 @@ function renderArchiveTable() {
         finishedAt: null,
         actualSeconds: null,
         elapsedSeconds: 0,
-        comment: ''
+        comment: '',
+        updatedAt: nowMs()
       }));
       const newCard = {
         ...card,
@@ -2720,10 +2811,12 @@ function renderArchiveTable() {
         name: (card.name || '') + ' (копия)',
         status: 'NOT_STARTED',
         archived: false,
+        updatedAt: nowMs(),
         attachments: (card.attachments || []).map(file => ({
           ...file,
           id: genId('file'),
-          createdAt: Date.now()
+          createdAt: nowMs(),
+          updatedAt: nowMs()
         })),
         operations: cloneOps
       };
@@ -2791,6 +2884,22 @@ function setupNavigation() {
   const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
   if (startBtn) {
     startBtn.click();
+  }
+}
+
+function activateNavTab(targetId = 'dashboard') {
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  let btn = navButtons.find(b => b.dataset.target === targetId && hasPermission(targetId, 'view'));
+  if (!btn) {
+    btn = navButtons.find(b => hasPermission(b.dataset.target, 'view')) || navButtons[0];
+  }
+  if (!btn) return;
+  if (btn.dataset.navBound !== '1') {
+    handleNavClick(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) {
+    btn.click();
   }
 }
 
@@ -2922,7 +3031,7 @@ function setupForms() {
     const name = document.getElementById('center-name').value.trim();
     const desc = document.getElementById('center-desc').value.trim();
     if (!name) return;
-    centers.push({ id: genId('wc'), name: name, desc: desc });
+    centers.push({ id: genId('wc'), name: name, desc: desc, updatedAt: nowMs() });
     saveData();
     renderCentersTable();
     fillRouteSelectors();
@@ -2946,7 +3055,7 @@ function setupForms() {
         if (!code) {
           code = generateUniqueOpCode(used);
         }
-        ops.push({ id: genId('op'), code, name: name, desc: desc, recTime: time });
+        ops.push({ id: genId('op'), code, name: name, desc: desc, recTime: time, updatedAt: nowMs() });
         saveData();
         renderOpsTable();
         fillRouteSelectors();
