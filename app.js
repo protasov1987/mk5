@@ -2366,7 +2366,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
       '</div>' +
       '<div class="summary-actions">' +
       ' ' + stateBadge +
-      (canArchive ? ' <button type="button" class="btn-small btn-secondary archive-move-btn" data-card-id="' + card.id + '">Перенести в архив</button>' : '') +
+      (canArchive && canEditWorkorders ? ' <button type="button" class="btn-small btn-secondary archive-move-btn" data-card-id="' + card.id + '">Перенести в архив</button>' : '') +
       '</div>' +
       '</div>' +
       '</summary>';
@@ -2761,6 +2761,12 @@ function setupNavigation() {
     btn.dataset.navBound = '1';
     btn.addEventListener('click', () => handleNavClick(btn));
   });
+
+  const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
+  const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
+  if (startBtn) {
+    startBtn.click();
+  }
 }
 
 function activateNavTab(targetId = 'dashboard') {
