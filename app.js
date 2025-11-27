@@ -2891,17 +2891,18 @@ function closeUserModal() {
     errorEl.textContent = '';
 
     try {
-      const form = new FormData();
-      if (id) form.append('id', id);
-      form.append('name', name);
-      form.append('password', password);
-      form.append('level_id', levelId || '');
-      if (isActive) form.append('is_active', '1');
+      const params = new URLSearchParams();
+      if (id) params.append('id', id);
+      params.append('name', name);
+      params.append('password', password);
+      params.append('level_id', levelId || '');
+      params.append('is_active', isActive ? '1' : '0');
 
       const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
         method: 'POST',
         credentials: 'same-origin',
-        body: form
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        body: params.toString()
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
