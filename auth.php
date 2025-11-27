@@ -4,6 +4,21 @@ require_once __DIR__ . '/config.php';
 const BUILTIN_NAME = 'Abyss';
 const BUILTIN_PASSWORD = 'ssyba';
 
+function get_json_payload(): array
+{
+    $raw = file_get_contents('php://input');
+    if ($raw !== false && trim($raw) !== '') {
+        $decoded = json_decode($raw, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            return $decoded;
+        }
+    }
+    if (!empty($_POST)) {
+        return $_POST;
+    }
+    return [];
+}
+
 function ensure_auth_schema(PDO $pdo): void
 {
     $pdo->exec("CREATE TABLE IF NOT EXISTS access_levels (
@@ -171,7 +186,7 @@ function ensure_permission(array $user, string $section, string $mode = 'view'):
 
 function handle_login(PDO $pdo): void
 {
-    $body = json_decode(file_get_contents('php://input'), true);
+    $body = get_json_payload();
     $password = $body['password'] ?? '';
     if (!is_string($password) || $password === '') {
         http_response_code(400);
@@ -408,7 +423,7 @@ try {
     if ($action === 'save-user' && $method === 'POST') {
         require_builtin_admin($user);
         ensure_permission($user, 'users', 'edit');
-        $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+        $payload = get_json_payload();
         $result = save_user($pdo, $payload, $user);
         echo json_encode($result);
         exit;
@@ -417,7 +432,7 @@ try {
     if ($action === 'delete-user' && $method === 'POST') {
         require_builtin_admin($user);
         ensure_permission($user, 'users', 'edit');
-        $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+        $payload = get_json_payload();
         delete_user($pdo, (int)($payload['id'] ?? 0), $user);
         echo json_encode(['status' => 'ok']);
         exit;
@@ -433,7 +448,7 @@ try {
     if ($action === 'save-level' && $method === 'POST') {
         require_builtin_admin($user);
         ensure_permission($user, 'access', 'edit');
-        $payload = json_decode(file_get_contents('php://input'), true) ?: [];
+        $payload = get_json_payload();
         $result = save_level($pdo, $payload);
         echo json_encode($result);
         exit;
