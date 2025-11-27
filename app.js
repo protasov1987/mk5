@@ -34,6 +34,8 @@ let lastStateSignature = '';
 let pollIntervalId = null;
 let tickIntervalId = null;
 let uiBound = false;
+let stateDirty = false;
+let saveInFlight = false;
 
 const debounceDelay = 700;
 const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
@@ -812,13 +814,19 @@ function scheduleRenderIfPending() {
   }
 }
 
+function markDirty() {
+  stateDirty = true;
+}
+
 async function pushStateNow() {
   saveTimerId = null;
+  if (saveInFlight) return;
   if (!hasPermission('cards', 'edit')) {
     setConnectionStatus('Нет прав для сохранения изменений.', 'error');
     return;
   }
 
+  saveInFlight = true;
   try {
     const res = await fetch(UPDATE_STATE_ENDPOINT, {
       method: 'POST',
@@ -835,11 +843,26 @@ async function pushStateNow() {
     apiOnline = true;
     setConnectionStatus('', 'info');
     lastStateSignature = computeStateSignature({ cards, ops, centers });
+    stateDirty = false;
   } catch (err) {
     apiOnline = false;
     setConnectionStatus('Не удалось сохранить данные на сервер: ' + err.message, 'error');
     console.error('Ошибка сохранения данных на сервер', err);
+  } finally {
+    saveInFlight = false;
   }
+}
+
+function saveData() {
+  if (!hasPermission('cards', 'edit')) {
+    setConnectionStatus('Нет прав для сохранения изменений.', 'error');
+    return;
+  }
+  markDirty();
+  if (saveTimerId) {
+    clearTimeout(saveTimerId);
+  }
+  saveTimerId = setTimeout(pushStateNow, debounceDelay);
 }
 
 function saveData() {
@@ -949,6 +972,7 @@ function applyStatePayload(payload, { skipRender = false, persistDefaults = fals
   if (signature) {
     lastStateSignature = signature;
   }
+  stateDirty = false;
 
   if (skipRender) {
     pendingRender = true;
@@ -979,6 +1003,7 @@ async function loadData() {
 
 async function pollState() {
   if (!currentUser) return;
+  if (stateDirty || saveInFlight) return;
   try {
     const res = await fetch(GET_STATE_ENDPOINT);
     if (res.status === 401) {
@@ -2766,6 +2791,22 @@ function setupNavigation() {
   const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
   if (startBtn) {
     startBtn.click();
+  }
+}
+
+function activateNavTab(targetId = 'dashboard') {
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  let btn = navButtons.find(b => b.dataset.target === targetId && hasPermission(targetId, 'view'));
+  if (!btn) {
+    btn = navButtons.find(b => hasPermission(b.dataset.target, 'view')) || navButtons[0];
+  }
+  if (!btn) return;
+  if (btn.dataset.navBound !== '1') {
+    handleNavClick(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) {
+    btn.click();
   }
 }
 
