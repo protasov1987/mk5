@@ -39,7 +39,7 @@ try {
     }
 
     save_state($pdo, $incoming);
-    echo json_encode(['status' => 'ok']);
+    echo json_encode(['status' => 'ok', 'state' => $incoming]);
 } catch (InvalidArgumentException $e) {
     http_response_code(400);
     echo json_encode(['error' => $e->getMessage()]);
