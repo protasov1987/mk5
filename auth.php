@@ -12,6 +12,11 @@ function get_json_payload(): array
         if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
             return $decoded;
         }
+        $parsed = [];
+        parse_str($raw, $parsed);
+        if (!empty($parsed)) {
+            return $parsed;
+        }
     }
     if (!empty($_POST)) {
         return $_POST;

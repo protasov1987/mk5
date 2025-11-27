@@ -2891,7 +2891,7 @@ function closeUserModal() {
     errorEl.textContent = '';
 
     try {
-      const form = new URLSearchParams();
+      const form = new FormData();
       if (id) form.append('id', id);
       form.append('name', name);
       form.append('password', password);
@@ -2900,8 +2900,8 @@ function closeUserModal() {
 
       const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: form.toString()
+        credentials: 'same-origin',
+        body: form
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
