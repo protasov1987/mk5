@@ -886,8 +886,8 @@ async function pushStateNow() {
     }
 
     if (payload && payload.state) {
-      applyStatePayload(payload.state, { skipRender: true });
-      lastStateSignature = computeStateSignature(payload.state);
+      const incomingSignature = computeStateSignature(payload.state);
+      applyStatePayload(payload.state, { skipRender: true, sourceSignature: incomingSignature });
       pendingRender = true;
       scheduleRenderIfPending();
     } else {
@@ -989,7 +989,7 @@ function materializeRunningTimers() {
   return touched;
 }
 
-function applyStatePayload(payload, { skipRender = false, persistDefaults = false } = {}) {
+function applyStatePayload(payload, { skipRender = false, persistDefaults = false, sourceSignature = null } = {}) {
   cards = Array.isArray(payload.cards) ? payload.cards : [];
   ops = Array.isArray(payload.ops) ? payload.ops : [];
   centers = Array.isArray(payload.centers) ? payload.centers : [];
@@ -1044,7 +1044,7 @@ function applyStatePayload(payload, { skipRender = false, persistDefaults = fals
     saveData();
   }
 
-  const signature = computeStateSignature({ cards, ops, centers });
+  const signature = sourceSignature || computeStateSignature({ cards, ops, centers });
   if (signature) {
     lastStateSignature = signature;
   }
@@ -1066,7 +1066,7 @@ async function loadData() {
     }
     if (!res.ok) throw new Error('Ответ сервера ' + res.status);
     const payload = await res.json();
-    applyStatePayload(payload, { persistDefaults: true });
+    applyStatePayload(payload, { persistDefaults: true, sourceSignature: computeStateSignature(payload) });
     apiOnline = true;
     setConnectionStatus('', 'info');
   } catch (err) {
@@ -1093,7 +1093,7 @@ async function pollState() {
     const signature = computeStateSignature(payload);
     if (signature && signature === lastStateSignature) return;
     apiOnline = true;
-    applyStatePayload(payload, { skipRender: isTextInputActive() });
+    applyStatePayload(payload, { skipRender: isTextInputActive(), sourceSignature: signature });
     scheduleRenderIfPending();
   } catch (err) {
     apiOnline = false;
@@ -2876,6 +2876,22 @@ function setupNavigation() {
   const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
   if (startBtn) {
     startBtn.click();
+  }
+}
+
+function activateNavTab(targetId = 'dashboard') {
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  let btn = navButtons.find(b => b.dataset.target === targetId && hasPermission(targetId, 'view'));
+  if (!btn) {
+    btn = navButtons.find(b => hasPermission(b.dataset.target, 'view')) || navButtons[0];
+  }
+  if (!btn) return;
+  if (btn.dataset.navBound !== '1') {
+    handleNavClick(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) {
+    btn.click();
   }
 }
 
