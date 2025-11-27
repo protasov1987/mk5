@@ -32,6 +32,8 @@ let saveTimerId = null;
 let pendingRender = false;
 let lastStateSignature = '';
 let pollIntervalId = null;
+let tickIntervalId = null;
+let uiBound = false;
 
 const debounceDelay = 700;
 const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
@@ -95,6 +97,10 @@ async function performLogout() {
   if (pollIntervalId) {
     clearInterval(pollIntervalId);
     pollIntervalId = null;
+  }
+  if (tickIntervalId) {
+    clearInterval(tickIntervalId);
+    tickIntervalId = null;
   }
   if (saveTimerId) {
     clearTimeout(saveTimerId);
@@ -160,12 +166,7 @@ function applyAccessUI() {
     });
   }
 
-  const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
-  const desiredStart = pickStartTab(currentUser, 'dashboard');
-  const startBtn = visibleButtons.find(btn => btn.dataset.target === desiredStart) || visibleButtons[0];
-  if (startBtn && !startBtn.classList.contains('active')) {
-    startBtn.click();
-  }
+  activateNavTab(pickStartTab(currentUser, 'dashboard'));
 }
 
 function pickStartTab(user, fallback = 'dashboard') {
@@ -2727,41 +2728,60 @@ function tickTimers() {
 }
 
 // === НАВИГАЦИЯ ===
-function setupNavigation(defaultTab = 'dashboard') {
-  const navButtons = document.querySelectorAll('.nav-btn');
-  navButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.getAttribute('data-target');
-      if (!target) return;
-      if (!hasPermission(target, 'view')) {
-        setConnectionStatus('Нет прав доступа', 'error');
-        return;
-      }
-      setConnectionStatus('', 'info');
+function handleNavClick(btn) {
+  const target = btn.getAttribute('data-target');
+  if (!target) return;
+  if (!hasPermission(target, 'view')) {
+    setConnectionStatus('Нет прав доступа', 'error');
+    return;
+  }
+  setConnectionStatus('', 'info');
 
-      document.querySelectorAll('main section').forEach(sec => {
-        sec.classList.remove('active');
-      });
-      const section = document.getElementById(target);
-      if (section) {
-        section.classList.add('active');
-      }
+  document.querySelectorAll('main section').forEach(sec => {
+    sec.classList.remove('active');
+  });
+  const section = document.getElementById(target);
+  if (section) {
+    section.classList.add('active');
+  }
 
-      navButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
 
-      if (target === 'workorders') {
-        renderWorkordersTable({ collapseAll: true });
-      } else if (target === 'archive') {
-        renderArchiveTable();
-      }
-    });
+  if (target === 'workorders') {
+    renderWorkordersTable({ collapseAll: true });
+  } else if (target === 'archive') {
+    renderArchiveTable();
+  }
+}
+
+function setupNavigation() {
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    if (btn.dataset.navBound === '1') return;
+    btn.dataset.navBound = '1';
+    btn.addEventListener('click', () => handleNavClick(btn));
   });
 
   const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
   const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
   if (startBtn) {
     startBtn.click();
+  }
+}
+
+function activateNavTab(targetId = 'dashboard') {
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  let btn = navButtons.find(b => b.dataset.target === targetId && hasPermission(targetId, 'view'));
+  if (!btn) {
+    btn = navButtons.find(b => hasPermission(b.dataset.target, 'view')) || navButtons[0];
+  }
+  if (!btn) return;
+  if (btn.dataset.navBound !== '1') {
+    handleNavClick(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) {
+    btn.click();
   }
 }
 
@@ -3297,15 +3317,10 @@ function setupAuthUI() {
         await loadUsers();
         await loadData();
         startPollingState();
-        const startTab = pickStartTab(user, 'dashboard');
-        setupNavigation(startTab);
-        setupCardsTabs();
-        setupForms();
-        setupBarcodeModal();
-        setupAttachmentControls();
-        setupLogModal();
+        bindStaticUI();
+        activateNavTab(pickStartTab(user, 'dashboard'));
         renderEverything();
-        setInterval(tickTimers, 1000);
+        startTickTimers();
       } catch (err) {
         errorEl.textContent = err.message;
       }
@@ -3335,6 +3350,24 @@ function setupAuthUI() {
   document.getElementById('level-save')?.addEventListener('click', saveLevel);
 }
 
+function bindStaticUI() {
+  if (uiBound) return;
+  uiBound = true;
+  setupNavigation();
+  setupCardsTabs();
+  setupForms();
+  setupBarcodeModal();
+  setupAttachmentControls();
+  setupLogModal();
+}
+
+function startTickTimers() {
+  if (tickIntervalId) {
+    clearInterval(tickIntervalId);
+  }
+  tickIntervalId = setInterval(tickTimers, 1000);
+}
+
 // === ИНИЦИАЛИЗАЦИЯ ===
 document.addEventListener('DOMContentLoaded', async () => {
   startRealtimeClock();
@@ -3346,14 +3379,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadUsers();
     await loadData();
     startPollingState();
-    const startTab = pickStartTab(currentUser, 'dashboard');
-    setupNavigation(startTab);
-    setupCardsTabs();
-    setupForms();
-    setupBarcodeModal();
-    setupAttachmentControls();
-    setupLogModal();
+    bindStaticUI();
+    activateNavTab(pickStartTab(currentUser, 'dashboard'));
     renderEverything();
-    setInterval(tickTimers, 1000);
+    startTickTimers();
   }
 });
