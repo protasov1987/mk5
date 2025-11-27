@@ -10,6 +10,7 @@
       <div id="auth-error" class="form-error"></div>
     </div>
   </div>
+  <main class="hidden">
     <!-- Дашборд -->
     <section id="dashboard" class="active">
       <div class="card">

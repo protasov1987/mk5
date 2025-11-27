@@ -29,4 +29,3 @@
     </div>
 </header>
 <div id="server-status" class="status-banner status-info hidden" role="status" aria-live="polite"></div>
-<main class="hidden">
