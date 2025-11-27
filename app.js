@@ -2365,7 +2365,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
       '</div>' +
       '<div class="summary-actions">' +
       ' ' + stateBadge +
-      (canArchive ? ' <button type="button" class="btn-small btn-secondary archive-move-btn" data-card-id="' + card.id + '">Перенести в архив</button>' : '') +
+      (canArchive && canEditWorkorders ? ' <button type="button" class="btn-small btn-secondary archive-move-btn" data-card-id="' + card.id + '">Перенести в архив</button>' : '') +
       '</div>' +
       '</div>' +
       '</summary>';
