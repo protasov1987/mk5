@@ -1,6 +1,8 @@
 <?php
 // Общая конфигурация приложения
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Настройки базы данных для Timeweb
 $db_host = getenv('DB_HOST') ?: 'localhost';
@@ -17,8 +19,9 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 } catch (PDOException $e) {
+    error_log('DB connection failed: ' . $e->getMessage());
     http_response_code(500);
-    die('Не удалось подключиться к базе данных: ' . htmlspecialchars($e->getMessage()));
+    die('Не удалось подключиться к базе данных. Проверьте параметры подключения в config.php.');
 }
 
 date_default_timezone_set('Europe/Moscow');

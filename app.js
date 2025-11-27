@@ -1,6 +1,6 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
-const API_ENDPOINT = '/api.php';
-const AUTH_ENDPOINT = '/auth.php';
+const API_ENDPOINT = 'api.php';
+const AUTH_ENDPOINT = 'auth.php';
 
 let cards = [];
 let ops = [];
@@ -56,8 +56,8 @@ function startRealtimeClock() {
 
 // === АВТОРИЗАЦИЯ ===
 async function fetchAuthStatus() {
-  const res = await fetch(`${AUTH_ENDPOINT}?action=status`);
-  if (!res.ok) return { user: null };
+  const res = await fetch(`${AUTH_ENDPOINT}?action=status`).catch(() => null);
+  if (!res || !res.ok) return { user: null };
   return res.json();
 }
 
@@ -66,7 +66,10 @@ async function performLogin(password) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password })
-  });
+  }).catch(() => null);
+  if (!res) {
+    throw new Error('Нет соединения с сервером авторизации');
+  }
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
     throw new Error(payload.error || 'Ошибка авторизации');
@@ -75,9 +78,11 @@ async function performLogin(password) {
 }
 
 async function performLogout() {
-  await fetch(`${AUTH_ENDPOINT}?action=logout`, { method: 'POST' });
+  await fetch(`${AUTH_ENDPOINT}?action=logout`, { method: 'POST' }).catch(() => {});
   currentUser = null;
   currentPermissions = {};
+  knownUsers = [];
+  accessLevels = [];
 }
 
 function hasPermission(section, mode = 'view') {
