@@ -25,6 +25,7 @@ let currentUser = null;
 let currentPermissions = {};
 let knownUsers = [];
 let accessLevels = [];
+let cardModalReadonly = false;
 const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
 
 function setConnectionStatus(message, variant = 'info') {
@@ -92,6 +93,14 @@ function hasPermission(section, mode = 'view') {
   return !!perms.view;
 }
 
+function canUploadAttachments() {
+  return !!(currentPermissions.attachments && currentPermissions.attachments.upload);
+}
+
+function canDeleteAttachments() {
+  return !!(currentPermissions.attachments && currentPermissions.attachments.delete);
+}
+
 function applyAccessUI() {
   const navButtons = document.querySelectorAll('.nav-btn');
   navButtons.forEach(btn => {
@@ -110,7 +119,35 @@ function applyAccessUI() {
 
   const uploadBtn = document.getElementById('attachments-add-btn');
   if (uploadBtn) {
-    uploadBtn.classList.toggle('hidden', !hasPermission('attachments', 'edit'));
+    uploadBtn.classList.toggle('hidden', !(hasPermission('cards', 'edit') && canUploadAttachments()));
+  }
+
+  const canEditCards = hasPermission('cards', 'edit');
+  const newCardBtn = document.getElementById('btn-new-card');
+  if (newCardBtn) {
+    newCardBtn.disabled = !canEditCards;
+    newCardBtn.classList.toggle('disabled', !canEditCards);
+  }
+
+  const centerForm = document.getElementById('center-form');
+  if (centerForm) {
+    centerForm.querySelectorAll('input, textarea, button').forEach(el => {
+      el.disabled = !canEditCards;
+    });
+  }
+
+  const opForm = document.getElementById('op-form');
+  if (opForm) {
+    opForm.querySelectorAll('input, textarea, button').forEach(el => {
+      el.disabled = !canEditCards;
+    });
+  }
+
+  const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
+  const desiredStart = pickStartTab(currentUser, 'dashboard');
+  const startBtn = visibleButtons.find(btn => btn.dataset.target === desiredStart) || visibleButtons[0];
+  if (startBtn && !startBtn.classList.contains('active')) {
+    startBtn.click();
   }
 }
 
@@ -737,6 +774,10 @@ function ensureOperationCodes() {
 // === ХРАНИЛИЩЕ ===
 async function saveData() {
   try {
+    if (!hasPermission('cards', 'edit')) {
+      setConnectionStatus('Нет прав для сохранения изменений.', 'error');
+      return;
+    }
     if (!apiOnline) {
       setConnectionStatus('Сервер недоступен — изменения не сохраняются. Проверьте, что запущен server.js.', 'error');
       return;
@@ -983,6 +1024,7 @@ function renderDashboard() {
 function renderCardsTable() {
   const wrapper = document.getElementById('cards-table-wrapper');
   const visibleCards = cards.filter(c => !c.archived);
+  const canEditCards = hasPermission('cards', 'edit');
   if (!visibleCards.length) {
     wrapper.innerHTML = '<p>Список технологических карт пуст. Нажмите «Создать карту».</p>';
     return;
@@ -1015,10 +1057,10 @@ function renderCardsTable() {
       '<td>' + (card.operations ? card.operations.length : 0) + '</td>' +
       '<td><button class="btn-small clip-btn" data-attach-card="' + card.id + '">📎 <span class="clip-count">' + filesCount + '</span></button></td>' +
       '<td><div class="table-actions">' +
-      '<button class="btn-small" data-action="edit-card" data-id="' + card.id + '">Открыть</button>' +
+      '<button class="btn-small" data-action="edit-card" data-id="' + card.id + '">' + (canEditCards ? 'Открыть' : 'Просмотр') + '</button>' +
       '<button class="btn-small" data-action="print-card" data-id="' + card.id + '">Печать</button>' +
-      '<button class="btn-small" data-action="copy-card" data-id="' + card.id + '">Копировать</button>' +
-      '<button class="btn-small btn-danger" data-action="delete-card" data-id="' + card.id + '">Удалить</button>' +
+      (canEditCards ? '<button class="btn-small" data-action="copy-card" data-id="' + card.id + '">Копировать</button>' : '') +
+      (canEditCards ? '<button class="btn-small btn-danger" data-action="delete-card" data-id="' + card.id + '">Удалить</button>' : '') +
       '</div></td>' +
       '</tr>';
   });
@@ -1027,12 +1069,13 @@ function renderCardsTable() {
 
   wrapper.querySelectorAll('button[data-action="edit-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
-      openCardModal(btn.getAttribute('data-id'));
+      openCardModal(btn.getAttribute('data-id'), { readonly: !canEditCards });
     });
   });
 
   wrapper.querySelectorAll('button[data-action="copy-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (!hasPermission('cards', 'edit')) { setConnectionStatus('Нет прав для копирования карты', 'error'); return; }
       duplicateCard(btn.getAttribute('data-id'));
     });
   });
@@ -1047,6 +1090,7 @@ function renderCardsTable() {
 
   wrapper.querySelectorAll('button[data-action="delete-card"]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (!hasPermission('cards', 'edit')) { setConnectionStatus('Нет прав для удаления карты', 'error'); return; }
       const id = btn.getAttribute('data-id');
       cards = cards.filter(c => c.id !== id);
       saveData();
@@ -1071,6 +1115,7 @@ function renderCardsTable() {
 }
 
 function duplicateCard(cardId) {
+  if (!hasPermission('cards', 'edit')) { return; }
   const card = cards.find(c => c.id === cardId);
   if (!card) return;
   const copy = cloneCard(card);
@@ -1134,9 +1179,46 @@ function createEmptyCardDraft() {
   };
 }
 
-function openCardModal(cardId) {
+function setCardModalReadonlyState(readonly) {
+  cardModalReadonly = readonly;
+  const saveBtn = document.getElementById('card-save-btn');
+  const draftButton = document.getElementById('card-print-btn');
+  const cancelBtn = document.getElementById('card-cancel-btn');
+  const routeForm = document.getElementById('route-form');
+  const form = document.getElementById('card-form');
+  const header = document.getElementById('card-modal-title');
+
+  if (header) {
+    header.textContent = cardModalReadonly ? 'Просмотр карты' : (activeCardIsNew ? 'Создание карты' : 'Редактирование карты');
+  }
+
+  [saveBtn, draftButton].forEach(btn => {
+    if (btn) {
+      btn.disabled = cardModalReadonly;
+      btn.classList.toggle('hidden', cardModalReadonly && btn === saveBtn);
+    }
+  });
+  if (cancelBtn) {
+    cancelBtn.textContent = cardModalReadonly ? 'Закрыть' : 'Отмена';
+  }
+  if (routeForm) {
+    routeForm.classList.toggle('hidden', cardModalReadonly);
+  }
+  if (form) {
+    form.querySelectorAll('input, textarea').forEach(el => {
+      el.disabled = cardModalReadonly;
+    });
+  }
+}
+
+function openCardModal(cardId, { readonly = false } = {}) {
   const modal = document.getElementById('card-modal');
   if (!modal) return;
+  const canEditCards = hasPermission('cards', 'edit');
+  if (!cardId && !canEditCards) {
+    alert('Недостаточно прав для создания карты');
+    return;
+  }
   activeCardOriginalId = cardId || null;
   if (cardId) {
     const card = cards.find(c => c.id === cardId);
@@ -1147,8 +1229,8 @@ function openCardModal(cardId) {
     activeCardDraft = createEmptyCardDraft();
     activeCardIsNew = true;
   }
+  setCardModalReadonlyState(readonly || !canEditCards);
   ensureCardMeta(activeCardDraft, { skipSnapshot: activeCardIsNew });
-  document.getElementById('card-modal-title').textContent = activeCardIsNew ? 'Создание карты' : 'Редактирование карты';
   document.getElementById('card-id').value = activeCardDraft.id;
   document.getElementById('card-name').value = activeCardDraft.name || '';
   document.getElementById('card-qty').value = activeCardDraft.quantity != null ? activeCardDraft.quantity : '';
@@ -1184,7 +1266,7 @@ function closeCardModal() {
 }
 
 function saveCardDraft() {
-  if (!activeCardDraft) return;
+  if (!activeCardDraft || cardModalReadonly || !hasPermission('cards', 'edit')) return;
   const draft = cloneCard(activeCardDraft);
   draft.operations = (draft.operations || []).map((op, idx) => ({
     ...op,
@@ -1310,6 +1392,7 @@ function renderAttachmentsModal() {
   const list = document.getElementById('attachments-list');
   const uploadHint = document.getElementById('attachments-upload-hint');
   if (!card || !list || !title || !uploadHint) return;
+  const allowDelete = hasPermission('cards', 'edit') && canDeleteAttachments();
   ensureAttachments(card);
   title.textContent = card.name || card.barcode || 'Файлы карты';
   const files = card.attachments || [];
@@ -1322,15 +1405,15 @@ function renderAttachmentsModal() {
       const downloadAttr = attachmentContext.source === 'live'
         ? 'href="files.php?id=' + file.id + '" target="_blank" rel="noopener"'
         : '';
+      const downloadBtn = attachmentContext.source === 'live'
+        ? '<a class="btn-small" ' + downloadAttr + '>Скачать</a>'
+        : '<button class="btn-small" data-download-id="' + file.id + '">Скачать</button>';
+      const deleteBtn = allowDelete ? '<button class="btn-small btn-danger" data-delete-id="' + file.id + '">Удалить</button>' : '';
       html += '<tr>' +
         '<td>' + escapeHtml(file.name || 'файл') + '</td>' +
         '<td>' + escapeHtml(formatBytes(file.size)) + '</td>' +
         '<td>' + escapeHtml(date) + '</td>' +
-        '<td><div class="table-actions">' +
-        (attachmentContext.source === 'live'
-          ? '<a class="btn-small" ' + downloadAttr + '>Скачать</a>'
-          : '<button class="btn-small" data-download-id="' + file.id + '">Скачать</button>') +
-        '</div></td>' +
+        '<td><div class="table-actions">' + downloadBtn + deleteBtn + '</div></td>' +
         '</tr>';
     });
     html += '</tbody></table>';
@@ -1355,12 +1438,33 @@ function renderAttachmentsModal() {
       });
     });
   }
+
+  if (allowDelete) {
+    list.querySelectorAll('button[data-delete-id]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-delete-id');
+        const cardRef = getAttachmentTargetCard();
+        if (!cardRef || !cardRef.attachments) return;
+        const beforeCount = cardRef.attachments.length;
+        cardRef.attachments = cardRef.attachments.filter(f => f.id !== id);
+        if (cardRef.attachments.length !== beforeCount) {
+          recordCardLog(cardRef, { action: 'Файлы', object: 'Карта', field: 'attachments', oldValue: beforeCount, newValue: cardRef.attachments.length });
+          if (attachmentContext.source === 'live') {
+            saveData();
+            renderEverything();
+          }
+          renderAttachmentsModal();
+          updateAttachmentCounters(cardRef.id);
+        }
+      });
+    });
+  }
 }
 
 async function addAttachmentsFromFiles(fileList) {
   const card = getAttachmentTargetCard();
   if (!card || !fileList || !fileList.length) return;
-  if (!hasPermission('attachments', 'edit')) {
+  if (!(hasPermission('cards', 'edit') && canUploadAttachments())) {
     alert('Недостаточно прав для загрузки файлов');
     return;
   }
@@ -1796,55 +1900,63 @@ function renderRouteTableDraft() {
     return;
   }
   const sortedOps = [...opsArr].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const readonly = cardModalReadonly;
   let html = '<table><thead><tr>' +
-    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th><th>Действия</th>' +
+    '<th>Порядок</th><th>Участок</th><th>Код операции</th><th>Операция</th><th>Исполнитель</th><th>План (мин)</th><th>Статус</th>' +
+    (readonly ? '' : '<th>Действия</th>') +
     '</tr></thead><tbody>';
   sortedOps.forEach((o, index) => {
+    const executorCell = readonly
+      ? '<div>' + escapeHtml(o.executor || '') + '</div>'
+      : '<input class="executor-input" data-rop-id="' + o.id + '" value="' + escapeHtml(o.executor || '') + '" placeholder="ФИО" />';
+    const actionsCell = readonly ? '' : '<td><div class="table-actions">' +
+      '<button class="btn-small" data-action="move-up">↑</button>' +
+      '<button class="btn-small" data-action="move-down">↓</button>' +
+      '<button class="btn-small btn-danger" data-action="delete">Удалить</button>' +
+      '</div></td>';
     html += '<tr data-rop-id="' + o.id + '">' +
       '<td>' + (index + 1) + '</td>' +
       '<td>' + escapeHtml(o.centerName) + '</td>' +
       '<td>' + escapeHtml(o.opCode || '') + '</td>' +
       '<td>' + renderOpName(o) + '</td>' +
-      '<td><input class="executor-input" data-rop-id="' + o.id + '" value="' + escapeHtml(o.executor || '') + '" placeholder="ФИО" /></td>' +
+      '<td>' + executorCell + '</td>' +
       '<td>' + (o.plannedMinutes || '') + '</td>' +
       '<td>' + statusBadge(o.status) + '</td>' +
-      '<td><div class="table-actions">' +
-      '<button class="btn-small" data-action="move-up">↑</button>' +
-      '<button class="btn-small" data-action="move-down">↓</button>' +
-      '<button class="btn-small btn-danger" data-action="delete">Удалить</button>' +
-      '</div></td>' +
+      actionsCell +
       '</tr>';
   });
   html += '</tbody></table>';
   wrapper.innerHTML = html;
 
-  wrapper.querySelectorAll('tr[data-rop-id]').forEach(row => {
-    const ropId = row.getAttribute('data-rop-id');
-    row.querySelectorAll('button[data-action]').forEach(btn => {
-      const action = btn.getAttribute('data-action');
-      btn.addEventListener('click', () => {
-        if (!activeCardDraft) return;
-        if (action === 'delete') {
-          activeCardDraft.operations = activeCardDraft.operations.filter(o => o.id !== ropId);
-        } else if (action === 'move-up' || action === 'move-down') {
-          moveRouteOpInDraft(ropId, action === 'move-up' ? -1 : 1);
-        }
-        document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
-        renderRouteTableDraft();
+  if (!readonly) {
+    wrapper.querySelectorAll('tr[data-rop-id]').forEach(row => {
+      const ropId = row.getAttribute('data-rop-id');
+      row.querySelectorAll('button[data-action]').forEach(btn => {
+        const action = btn.getAttribute('data-action');
+        btn.addEventListener('click', () => {
+          if (!activeCardDraft) return;
+          if (action === 'delete') {
+            activeCardDraft.operations = activeCardDraft.operations.filter(o => o.id !== ropId);
+          } else if (action === 'move-up' || action === 'move-down') {
+            moveRouteOpInDraft(ropId, action === 'move-up' ? -1 : 1);
+          }
+          document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+          renderRouteTableDraft();
+        });
       });
     });
-  });
 
-  wrapper.querySelectorAll('.executor-input').forEach(input => {
-    input.addEventListener('input', e => {
-      const ropId = input.getAttribute('data-rop-id');
-      const value = (e.target.value || '').trim();
-      const op = activeCardDraft.operations.find(o => o.id === ropId);
-      if (!op) return;
-      op.executor = value;
-      document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+    wrapper.querySelectorAll('.executor-input').forEach(input => {
+      input.addEventListener('input', e => {
+        const ropId = input.getAttribute('data-rop-id');
+        const value = (e.target.value || '').trim();
+        const op = activeCardDraft.operations.find(o => o.id === ropId);
+        if (!op) return;
+        op.executor = value;
+        document.getElementById('card-status-text').textContent = cardStatusText(activeCardDraft);
+      });
     });
-  });
+  }
 }
 
 function moveRouteOpInDraft(ropId, delta) {
@@ -2104,6 +2216,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
   const wrapper = document.getElementById('workorders-table-wrapper');
   const cardsWithOps = cards.filter(c => !c.archived && c.operations && c.operations.length);
   const canEditWorkorders = hasPermission('workorders', 'edit');
+  const canEditArchive = hasPermission('archive', 'edit');
   if (!cardsWithOps.length) {
     wrapper.innerHTML = '<p>Маршрутных операций пока нет.</p>';
     return;
@@ -2142,7 +2255,7 @@ function renderWorkordersTable({ collapseAll = false } = {}) {
   filteredBySearch.forEach(card => {
     const opened = !collapseAll && workorderOpenCards.has(card.id);
     const stateBadge = renderCardStateBadge(card);
-    const canArchive = card.status === 'DONE';
+    const canArchive = card.status === 'DONE' && canEditWorkorders && canEditArchive;
     const filesCount = (card.attachments || []).length;
     const barcodeInline = card.barcode
       ? ' • № карты: <span class="summary-barcode">' + escapeHtml(card.barcode) + ' <button type="button" class="btn-small btn-secondary wo-barcode-btn" data-card-id="' + card.id + '">Штрихкод</button></span>'
@@ -2584,6 +2697,10 @@ function setupCardsTabs() {
 // === ФОРМЫ ===
 function setupForms() {
   document.getElementById('btn-new-card').addEventListener('click', () => {
+    if (!hasPermission('cards', 'edit')) {
+      setConnectionStatus('Нет прав для создания карты', 'error');
+      return;
+    }
     openCardModal();
   });
 
@@ -2620,7 +2737,7 @@ function setupForms() {
 
   document.getElementById('route-form').addEventListener('submit', e => {
     e.preventDefault();
-    if (!activeCardDraft) return;
+    if (!activeCardDraft || cardModalReadonly) return;
     const opId = document.getElementById('route-op').value;
     const centerId = document.getElementById('route-center').value;
     const executor = document.getElementById('route-executor').value.trim();
@@ -2650,6 +2767,7 @@ function setupForms() {
 
   document.getElementById('center-form').addEventListener('submit', e => {
     e.preventDefault();
+    if (!hasPermission('cards', 'edit')) return;
     const name = document.getElementById('center-name').value.trim();
     const desc = document.getElementById('center-desc').value.trim();
     if (!name) return;
@@ -2662,6 +2780,7 @@ function setupForms() {
 
       document.getElementById('op-form').addEventListener('submit', e => {
         e.preventDefault();
+        if (!hasPermission('cards', 'edit')) return;
         const codeInput = document.getElementById('op-code').value.trim();
         const name = document.getElementById('op-name').value.trim();
         const desc = document.getElementById('op-desc').value.trim();
