@@ -124,13 +124,23 @@ function pickStartTab(user, fallback = 'dashboard') {
 }
 
 function showAuthOverlay() {
-  document.getElementById('auth-overlay')?.classList.remove('hidden');
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+  }
   document.querySelector('main')?.classList.add('hidden');
   document.body?.classList.add('unauth');
 }
 
 function hideAuthOverlay() {
-  document.getElementById('auth-overlay')?.classList.add('hidden');
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+    overlay.style.display = 'none';
+    overlay.setAttribute('aria-hidden', 'true');
+  }
   document.querySelector('main')?.classList.remove('hidden');
   document.body?.classList.remove('unauth');
 }
