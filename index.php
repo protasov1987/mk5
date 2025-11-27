@@ -1,28 +1,15 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <title>Трекер маршрутных карт ТСЗП</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="style.css" />
-</head>
-  <body>
-    <header>
-      <div class="header-left">
-        <h1>Трекер маршрутных карт ТСЗП</h1>
-        <div id="realtime-clock" class="clock-display" aria-live="polite"></div>
-      </div>
-      <nav>
-        <button class="nav-btn active" data-target="dashboard">Дашборд</button>
-        <button class="nav-btn" data-target="cards">Тех. карты</button>
-        <button class="nav-btn" data-target="workorders">Трекер</button>
-        <button class="nav-btn" data-target="archive">Архив</button>
-      </nav>
-    </header>
-
-  <div id="server-status" class="status-banner status-info hidden" role="status" aria-live="polite"></div>
-
-  <main>
+<?php require_once __DIR__ . '/header.php'; ?>
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+      <h2>Авторизация</h2>
+      <p class="text-muted">Введите пароль для входа</p>
+      <form id="auth-form" class="flex-col">
+        <input type="password" id="auth-password" placeholder="Пароль" required autofocus />
+        <button type="submit" class="btn-primary">Войти</button>
+      </form>
+      <div id="auth-error" class="form-error"></div>
+    </div>
+  </div>
     <!-- Дашборд -->
     <section id="dashboard" class="active">
       <div class="card">
@@ -140,8 +127,7 @@
         </div>
 
         <p style="font-size:12px; color:#6b7280; margin-top:0;">
-          Исполнитель выбирает нужную операцию и нажимает <strong>«Начать»</strong>, при необходимости <strong>«Пауза»</strong> /
-          <strong>«Продолжить»</strong>, после завершения — <strong>«Завершить»</strong>.
+          Исполнитель выбирает нужную операцию и нажимает <strong>«Начать»</strong>, при необходимости <strong>«Пауза»</strong> / <strong>«Продолжить»</strong>, после завершения — <strong>«Завершить»</strong>.
         </p>
         <div id="workorders-table-wrapper"></div>
       </div>
@@ -177,7 +163,119 @@
         <div id="archive-table-wrapper"></div>
       </div>
     </section>
-  </main>
+
+    <!-- Пользователи -->
+    <section id="users">
+      <div class="card">
+        <h2>Пользователи</h2>
+        <div class="flex" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <p class="text-muted" style="margin:0;">Управление доступом. Пароли должны быть уникальными (буквы+цифры, ≥6 символов).</p>
+          <button id="btn-new-user" class="btn-primary">Создать пользователя</button>
+        </div>
+        <div id="users-table"></div>
+      </div>
+
+      <div class="modal hidden" id="user-modal" role="dialog" aria-modal="true">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="user-modal-title">Пользователь</h3>
+          </div>
+          <div class="modal-body">
+            <form id="user-form" class="flex-col">
+              <input type="hidden" id="user-id" />
+              <label>Имя пользователя
+                <input id="user-name" required />
+              </label>
+              <label>Пароль
+                <div class="flex" style="align-items:flex-end; gap:8px;">
+                  <input id="user-password" placeholder="Буквы+цифры, ≥6" />
+                  <button type="button" id="btn-gen-pass" class="btn-secondary btn-small">Сгенерировать</button>
+                  <button type="button" id="btn-pass-barcode" class="btn-secondary btn-small">Печать Штрихкода</button>
+                </div>
+              </label>
+              <label>Уровень доступа
+                <select id="user-level"></select>
+              </label>
+              <label class="flex" style="align-items:center; gap:8px;">
+                <input type="checkbox" id="user-active" checked /> Активен
+              </label>
+              <div id="user-error" class="form-error"></div>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" id="user-cancel">Отмена</button>
+            <button type="button" class="btn-primary" id="user-save">Сохранить</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal hidden" id="user-barcode-modal" role="dialog" aria-modal="true">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Пароль в формате Code-128</h3>
+          </div>
+          <div class="modal-body">
+            <div id="user-barcode"></div>
+            <p id="user-barcode-name"></p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" id="user-barcode-close">Закрыть</button>
+            <button type="button" class="btn-primary" id="user-barcode-print">Печать</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Уровни доступа -->
+    <section id="access">
+      <div class="card">
+        <h2>Уровни доступа</h2>
+        <div class="flex" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <p class="text-muted" style="margin:0;">Гибкая настройка прав просмотра/изменения по разделам.</p>
+          <button id="btn-new-level" class="btn-primary">Создать уровень</button>
+        </div>
+        <div id="levels-table"></div>
+      </div>
+
+      <div class="modal hidden" id="level-modal" role="dialog" aria-modal="true">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="level-modal-title">Уровень доступа</h3>
+          </div>
+          <div class="modal-body">
+            <form id="level-form" class="flex-col">
+              <input type="hidden" id="level-id" />
+              <label>Название уровня
+                <input id="level-name" required />
+              </label>
+              <label>Описание
+                <input id="level-desc" />
+              </label>
+              <div class="flex" style="gap:12px;">
+                <div class="flex-col" style="flex:1 1 200px;">
+                  <label>Стартовая вкладка</label>
+                  <select id="level-default-tab">
+                    <option value="dashboard">Дашборд</option>
+                    <option value="cards">Тех. карты</option>
+                    <option value="workorders">Трекер</option>
+                  </select>
+                </div>
+                <div class="flex-col" style="flex:1 1 200px;">
+                  <label>Авто-выход (мин)</label>
+                  <input type="number" id="level-timeout" min="1" value="30" />
+                </div>
+              </div>
+              <div id="level-perms"></div>
+              <div id="level-error" class="form-error"></div>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" id="level-cancel">Отмена</button>
+            <button type="button" class="btn-primary" id="level-save">Сохранить</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
   <div id="card-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="card-modal-title">
     <div class="modal-content card-modal-content">
@@ -247,6 +345,14 @@
             <div class="flex-col" style="flex:1 1 120px;">
               <label for="route-planned">Плановое время (мин)</label>
               <input id="route-planned" type="number" min="1" value="30" required />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-order">Очередность</label>
+              <input id="route-order" type="number" min="1" value="1" />
+            </div>
+            <div class="flex-col" style="flex:1 1 120px;">
+              <label for="route-notes">Комментарий</label>
+              <input id="route-notes" />
             </div>
             <div class="flex-col" style="flex:0 0 auto; align-self:flex-end;">
               <button type="submit" class="btn-primary">Добавить</button>
@@ -340,7 +446,4 @@
       </div>
     </div>
   </div>
-
-  <script src="app.js"></script>
-</body>
-</html>
+<?php require_once __DIR__ . '/footer.php'; ?>
