@@ -60,6 +60,12 @@ nav {
   margin-left: auto;
 }
 
+.unauth nav,
+.unauth .user-box,
+.unauth main {
+  display: none;
+}
+
 .cards-toolbar {
   display: flex;
   justify-content: flex-start;

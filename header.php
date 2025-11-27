@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="style.css" />
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 </head>
-<body>
+<body class="unauth">
 <header>
     <div class="header-left">
         <h1>Трекер маршрутных карт ТСЗП</h1>

@@ -126,11 +126,13 @@ function pickStartTab(user, fallback = 'dashboard') {
 function showAuthOverlay() {
   document.getElementById('auth-overlay')?.classList.remove('hidden');
   document.querySelector('main')?.classList.add('hidden');
+  document.body?.classList.add('unauth');
 }
 
 function hideAuthOverlay() {
   document.getElementById('auth-overlay')?.classList.add('hidden');
   document.querySelector('main')?.classList.remove('hidden');
+  document.body?.classList.remove('unauth');
 }
 
 async function ensureAuthenticated() {
