@@ -1,5 +1,6 @@
 // === КОНСТАНТЫ И ГЛОБАЛЬНЫЕ МАССИВЫ ===
 const API_ENDPOINT = '/api.php';
+const AUTH_ENDPOINT = '/auth.php';
 
 let cards = [];
 let ops = [];
@@ -20,6 +21,11 @@ const ATTACH_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar,.7z';
 const ATTACH_MAX_SIZE = 15 * 1024 * 1024; // 15 MB
 let logContextCardId = null;
 let clockIntervalId = null;
+let currentUser = null;
+let currentPermissions = {};
+let knownUsers = [];
+let accessLevels = [];
+const SECTION_PERMS = ['dashboard', 'cards', 'workorders', 'archive', 'users', 'access'];
 
 function setConnectionStatus(message, variant = 'info') {
   const banner = document.getElementById('server-status');
@@ -46,6 +52,117 @@ function startRealtimeClock() {
   update();
   if (clockIntervalId) clearInterval(clockIntervalId);
   clockIntervalId = setInterval(update, 1000);
+}
+
+// === АВТОРИЗАЦИЯ ===
+async function fetchAuthStatus() {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=status`);
+  if (!res.ok) return { user: null };
+  return res.json();
+}
+
+async function performLogin(password) {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || 'Ошибка авторизации');
+  }
+  return res.json();
+}
+
+async function performLogout() {
+  await fetch(`${AUTH_ENDPOINT}?action=logout`, { method: 'POST' });
+  currentUser = null;
+  currentPermissions = {};
+}
+
+function hasPermission(section, mode = 'view') {
+  const perms = currentPermissions[section];
+  if (!perms) return false;
+  if (mode === 'edit') return !!perms.edit;
+  return !!perms.view;
+}
+
+function applyAccessUI() {
+  const navButtons = document.querySelectorAll('.nav-btn');
+  navButtons.forEach(btn => {
+    const target = btn.dataset.target;
+    if (!target) return;
+    const allowed = hasPermission(target, 'view');
+    btn.classList.toggle('hidden', !allowed);
+  });
+
+  SECTION_PERMS.forEach(sectionId => {
+    const sectionEl = document.getElementById(sectionId);
+    if (!sectionEl) return;
+    const canSee = hasPermission(sectionId, 'view');
+    sectionEl.classList.toggle('hidden', !canSee);
+  });
+
+  const uploadBtn = document.getElementById('attachments-add-btn');
+  if (uploadBtn) {
+    uploadBtn.classList.toggle('hidden', !hasPermission('attachments', 'edit'));
+  }
+}
+
+function pickStartTab(user, fallback = 'dashboard') {
+  if (!user) return fallback;
+  const desired = user.name === 'Abyss' ? 'dashboard' : (user.default_tab || fallback);
+  if (hasPermission(desired, 'view')) return desired;
+  const navButtons = Array.from(document.querySelectorAll('.nav-btn')).filter(btn => !btn.classList.contains('hidden'));
+  const firstAllowed = navButtons.find(btn => hasPermission(btn.dataset.target, 'view'));
+  return firstAllowed?.dataset.target || fallback;
+}
+
+function showAuthOverlay() {
+  document.getElementById('auth-overlay')?.classList.remove('hidden');
+  document.querySelector('main')?.classList.add('hidden');
+}
+
+function hideAuthOverlay() {
+  document.getElementById('auth-overlay')?.classList.add('hidden');
+  document.querySelector('main')?.classList.remove('hidden');
+}
+
+async function ensureAuthenticated() {
+  try {
+    const { user } = await fetchAuthStatus();
+    if (user) {
+      currentUser = user;
+      currentPermissions = user.permissions || {};
+      const userNameEl = document.getElementById('user-name');
+      if (userNameEl) userNameEl.textContent = user.name || '';
+      hideAuthOverlay();
+      applyAccessUI();
+      return true;
+    }
+  } catch (err) {
+    console.warn('auth check failed', err);
+  }
+  showAuthOverlay();
+  return false;
+}
+
+async function loadUsers() {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=users`);
+  if (res.status === 401) { showAuthOverlay(); return; }
+  if (res.status === 403) { setConnectionStatus('Нет прав для просмотра пользователей', 'error'); return; }
+  const data = await res.json();
+  knownUsers = data.users || [];
+  renderUsers();
+}
+
+async function loadLevels() {
+  const res = await fetch(`${AUTH_ENDPOINT}?action=levels`);
+  if (res.status === 401) { showAuthOverlay(); return; }
+  if (res.status === 403) { setConnectionStatus('Нет прав для просмотра уровней доступа', 'error'); return; }
+  const data = await res.json();
+  accessLevels = data.levels || [];
+  renderLevels();
 }
 
 // === УТИЛИТЫ ===
@@ -613,6 +730,10 @@ async function saveData() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cards, ops, centers })
     });
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
     if (!res.ok) {
       throw new Error('Ответ сервера ' + res.status);
     }
@@ -676,6 +797,10 @@ function ensureDefaults() {
 async function loadData() {
   try {
     const res = await fetch(API_ENDPOINT);
+    if (res.status === 401) {
+      showAuthOverlay();
+      return;
+    }
     if (!res.ok) throw new Error('Ответ сервера ' + res.status);
     const payload = await res.json();
     cards = Array.isArray(payload.cards) ? payload.cards : [];
@@ -1218,6 +1343,10 @@ function renderAttachmentsModal() {
 async function addAttachmentsFromFiles(fileList) {
   const card = getAttachmentTargetCard();
   if (!card || !fileList || !fileList.length) return;
+  if (!hasPermission('attachments', 'edit')) {
+    alert('Недостаточно прав для загрузки файлов');
+    return;
+  }
   ensureAttachments(card);
   const beforeCount = card.attachments.length;
   const filesArray = Array.from(fileList);
@@ -2373,12 +2502,17 @@ function tickTimers() {
 }
 
 // === НАВИГАЦИЯ ===
-function setupNavigation() {
+function setupNavigation(defaultTab = 'dashboard') {
   const navButtons = document.querySelectorAll('.nav-btn');
   navButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const target = btn.getAttribute('data-target');
       if (!target) return;
+      if (!hasPermission(target, 'view')) {
+        setConnectionStatus('Нет прав доступа', 'error');
+        return;
+      }
+      setConnectionStatus('', 'info');
 
       document.querySelectorAll('main section').forEach(sec => {
         sec.classList.remove('active');
@@ -2398,6 +2532,12 @@ function setupNavigation() {
       }
     });
   });
+
+  const visibleButtons = Array.from(navButtons).filter(btn => !btn.classList.contains('hidden'));
+  const startBtn = visibleButtons.find(btn => btn.dataset.target === defaultTab) || visibleButtons[0];
+  if (startBtn) {
+    startBtn.click();
+  }
 }
 
 function setupCardsTabs() {
@@ -2630,16 +2770,355 @@ function setupAttachmentControls() {
   }
 }
 
+// === ПОЛЬЗОВАТЕЛИ И УРОВНИ ДОСТУПА ===
+function renderUsers() {
+  const wrapper = document.getElementById('users-table');
+  const select = document.getElementById('user-level');
+  if (select) {
+    select.innerHTML = '';
+    accessLevels.forEach(level => {
+      const opt = document.createElement('option');
+      opt.value = level.id;
+      opt.textContent = `${level.name}`;
+      select.appendChild(opt);
+    });
+  }
+  if (!wrapper) return;
+  if (!knownUsers.length) {
+    wrapper.innerHTML = '<p>Пока нет пользователей.</p>';
+    return;
+  }
+  const rows = knownUsers.map(u => `<tr>
+      <td>${escapeHtml(u.name)}</td>
+      <td>${escapeHtml(u.level_name || '')}</td>
+      <td>${u.is_active ? 'Активен' : 'Отключен'}</td>
+      <td>
+        <button class="btn-small btn-secondary" data-edit-user="${u.id}">Изменить</button>
+        ${u.is_builtin ? '' : `<button class="btn-small btn-danger" data-delete-user="${u.id}">Удалить</button>`}
+      </td>
+    </tr>`).join('');
+  wrapper.innerHTML = `<table class="table"><thead><tr><th>Имя</th><th>Уровень</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrapper.querySelectorAll('[data-edit-user]').forEach(btn => {
+    btn.addEventListener('click', () => openUserModal(btn.dataset.editUser));
+  });
+  wrapper.querySelectorAll('[data-delete-user]').forEach(btn => {
+    btn.addEventListener('click', () => deleteUser(btn.dataset.deleteUser));
+  });
+}
+
+function renderLevels() {
+  const wrapper = document.getElementById('levels-table');
+  if (!wrapper) return;
+  if (!accessLevels.length) {
+    wrapper.innerHTML = '<p>Пока нет уровней доступа.</p>';
+    return;
+  }
+  const rows = accessLevels.map(l => `<tr>
+      <td>${escapeHtml(l.name)}</td>
+      <td>${escapeHtml(l.description || '')}</td>
+      <td>${escapeHtml(l.default_tab || '')}</td>
+      <td>${escapeHtml(String(l.session_timeout || 0))} мин</td>
+      <td><button class="btn-small btn-secondary" data-edit-level="${l.id}">Изменить</button></td>
+    </tr>`).join('');
+  wrapper.innerHTML = `<table class="table"><thead><tr><th>Название</th><th>Описание</th><th>Стартовая</th><th>Тайм-аут</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  wrapper.querySelectorAll('[data-edit-level]').forEach(btn => {
+    btn.addEventListener('click', () => openLevelModal(btn.dataset.editLevel));
+  });
+}
+
+function openUserModal(userId = null) {
+  const modal = document.getElementById('user-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const title = document.getElementById('user-modal-title');
+  const idInput = document.getElementById('user-id');
+  const nameInput = document.getElementById('user-name');
+  const passInput = document.getElementById('user-password');
+  const levelSelect = document.getElementById('user-level');
+  const activeChk = document.getElementById('user-active');
+  const errorEl = document.getElementById('user-error');
+  errorEl.textContent = '';
+
+  if (userId) {
+    const user = knownUsers.find(u => String(u.id) === String(userId));
+    if (!user) return;
+    title.textContent = 'Редактирование пользователя';
+    idInput.value = user.id;
+    nameInput.value = user.name || '';
+    passInput.value = '';
+    levelSelect.value = user.level_id || '';
+    activeChk.checked = !!user.is_active;
+    passInput.disabled = !!user.is_builtin;
+  } else {
+    title.textContent = 'Новый пользователь';
+    idInput.value = '';
+    nameInput.value = '';
+    passInput.value = '';
+    levelSelect.value = accessLevels[0]?.id || '';
+    activeChk.checked = true;
+    passInput.disabled = false;
+  }
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal')?.classList.add('hidden');
+}
+
+async function saveUser() {
+  const id = document.getElementById('user-id').value || null;
+  const name = document.getElementById('user-name').value.trim();
+  const password = document.getElementById('user-password').value;
+  const levelId = document.getElementById('user-level').value || null;
+  const isActive = document.getElementById('user-active').checked;
+  const errorEl = document.getElementById('user-error');
+  errorEl.textContent = '';
+
+  try {
+    const res = await fetch(`${AUTH_ENDPOINT}?action=save-user`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name, password, level_id: levelId, is_active: isActive })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
+    closeUserModal();
+    await loadUsers();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+async function deleteUser(id) {
+  if (!confirm('Удалить пользователя?')) return;
+  await fetch(`${AUTH_ENDPOINT}?action=delete-user`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  loadUsers();
+}
+
+function openLevelModal(id = null) {
+  const modal = document.getElementById('level-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const title = document.getElementById('level-modal-title');
+  const idInput = document.getElementById('level-id');
+  const nameInput = document.getElementById('level-name');
+  const descInput = document.getElementById('level-desc');
+  const tabSelect = document.getElementById('level-default-tab');
+  const timeoutInput = document.getElementById('level-timeout');
+  const permsContainer = document.getElementById('level-perms');
+  const errorEl = document.getElementById('level-error');
+  errorEl.textContent = '';
+
+  const sections = [
+    { key: 'dashboard', label: 'Дашборд' },
+    { key: 'cards', label: 'Тех. карты' },
+    { key: 'workorders', label: 'Трекер' },
+    { key: 'archive', label: 'Архив' },
+    { key: 'attachments', label: 'Вложения (загрузка/удаление)' },
+    { key: 'users', label: 'Пользователи' },
+    { key: 'access', label: 'Уровни доступа' }
+  ];
+
+  let level = null;
+  if (id) {
+    level = accessLevels.find(l => String(l.id) === String(id));
+  }
+
+  title.textContent = level ? 'Редактирование уровня' : 'Новый уровень';
+  idInput.value = level?.id || '';
+  nameInput.value = level?.name || '';
+  descInput.value = level?.description || '';
+  tabSelect.value = level?.default_tab || 'dashboard';
+  timeoutInput.value = level?.session_timeout || 30;
+
+  permsContainer.innerHTML = sections.map(sec => {
+    const perm = level?.permissions?.[sec.key] || {};
+    return `<div class="perm-row">
+      <strong>${sec.label}</strong>
+      <label><input type="checkbox" data-perm-view="${sec.key}" ${perm.view ? 'checked' : ''}/> Просмотр</label>
+      <label><input type="checkbox" data-perm-edit="${sec.key}" ${perm.edit ? 'checked' : ''}/> Изменение</label>
+      ${sec.key === 'attachments' ? '<label><input type="checkbox" data-perm-upload="attachments" ' + (perm.upload ? 'checked' : '') + '/> Загрузка</label><label><input type="checkbox" data-perm-delete="attachments" ' + (perm.delete ? 'checked' : '') + '/> Удаление</label>' : ''}
+    </div>`;
+  }).join('');
+}
+
+function closeLevelModal() {
+  document.getElementById('level-modal')?.classList.add('hidden');
+}
+
+async function saveLevel() {
+  const id = document.getElementById('level-id').value || null;
+  const name = document.getElementById('level-name').value.trim();
+  const description = document.getElementById('level-desc').value.trim();
+  const default_tab = document.getElementById('level-default-tab').value;
+  const session_timeout = parseInt(document.getElementById('level-timeout').value || '30', 10);
+  const errorEl = document.getElementById('level-error');
+  errorEl.textContent = '';
+  const perms = {};
+  document.querySelectorAll('[data-perm-view]').forEach(chk => {
+    const key = chk.dataset.permView;
+    perms[key] = perms[key] || {};
+    perms[key].view = chk.checked;
+  });
+  document.querySelectorAll('[data-perm-edit]').forEach(chk => {
+    const key = chk.dataset.permEdit;
+    perms[key] = perms[key] || {};
+    perms[key].edit = chk.checked;
+  });
+  document.querySelectorAll('[data-perm-upload]').forEach(chk => {
+    const key = chk.dataset.permUpload;
+    perms[key] = perms[key] || {};
+    perms[key].upload = chk.checked;
+  });
+  document.querySelectorAll('[data-perm-delete]').forEach(chk => {
+    const key = chk.dataset.permDelete;
+    perms[key] = perms[key] || {};
+    perms[key].delete = chk.checked;
+  });
+
+  try {
+    const res = await fetch(`${AUTH_ENDPOINT}?action=save-level`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name, description, default_tab, session_timeout, permissions: perms })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Не удалось сохранить уровень');
+    closeLevelModal();
+    await loadLevels();
+    await loadUsers();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz0123456789';
+  let pass = '';
+  while (pass.length < 8) {
+    pass += chars[Math.floor(Math.random() * chars.length)];
+  }
+  document.getElementById('user-password').value = pass;
+  renderPasswordBarcode();
+}
+
+function renderPasswordBarcode() {
+  const value = document.getElementById('user-password').value || '';
+  const name = document.getElementById('user-name').value || '';
+  const container = document.getElementById('user-barcode');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!value) return;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  container.appendChild(svg);
+  try {
+    JsBarcode(svg, value, { format: 'CODE128', displayValue: true });
+    document.getElementById('user-barcode-name').textContent = name ? `Пользователь: ${name}` : '';
+  } catch (e) {
+    container.textContent = 'Не удалось построить штрихкод';
+  }
+}
+
+function openBarcodeModal() {
+  renderPasswordBarcode();
+  document.getElementById('user-barcode-modal')?.classList.remove('hidden');
+}
+
+function closeBarcodeModal() {
+  document.getElementById('user-barcode-modal')?.classList.add('hidden');
+}
+
+function printPasswordBarcode() {
+  renderPasswordBarcode();
+  const container = document.getElementById('user-barcode');
+  const name = document.getElementById('user-barcode-name').textContent || '';
+  const win = window.open('', '_blank');
+  win.document.write('<html><head><title>Штрихкод</title></head><body>');
+  win.document.write(container.innerHTML);
+  win.document.write(`<p>${escapeHtml(name)}</p>`);
+  win.document.write('</body></html>');
+  win.document.close();
+  win.focus();
+  win.print();
+  win.close();
+}
+
+function setupAuthUI() {
+  const form = document.getElementById('auth-form');
+  const pwd = document.getElementById('auth-password');
+  const errorEl = document.getElementById('auth-error');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.textContent = '';
+      try {
+        const { user } = await performLogin(pwd.value);
+        currentUser = user;
+        currentPermissions = user.permissions || {};
+        document.getElementById('user-name').textContent = user.name || '';
+        hideAuthOverlay();
+        applyAccessUI();
+        await loadLevels();
+        await loadUsers();
+        await loadData();
+        const startTab = pickStartTab(user, 'dashboard');
+        setupNavigation(startTab);
+        setupCardsTabs();
+        setupForms();
+        setupBarcodeModal();
+        setupAttachmentControls();
+        setupLogModal();
+        renderEverything();
+        setInterval(tickTimers, 1000);
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    });
+  }
+
+  const logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      await performLogout();
+      showAuthOverlay();
+    });
+  }
+
+  const newUserBtn = document.getElementById('btn-new-user');
+  if (newUserBtn) newUserBtn.addEventListener('click', () => openUserModal());
+  document.getElementById('user-cancel')?.addEventListener('click', closeUserModal);
+  document.getElementById('user-save')?.addEventListener('click', saveUser);
+  document.getElementById('btn-gen-pass')?.addEventListener('click', generatePassword);
+  document.getElementById('btn-pass-barcode')?.addEventListener('click', openBarcodeModal);
+  document.getElementById('user-barcode-close')?.addEventListener('click', closeBarcodeModal);
+  document.getElementById('user-barcode-print')?.addEventListener('click', printPasswordBarcode);
+
+  const newLevelBtn = document.getElementById('btn-new-level');
+  if (newLevelBtn) newLevelBtn.addEventListener('click', () => openLevelModal());
+  document.getElementById('level-cancel')?.addEventListener('click', closeLevelModal);
+  document.getElementById('level-save')?.addEventListener('click', saveLevel);
+}
+
 // === ИНИЦИАЛИЗАЦИЯ ===
 document.addEventListener('DOMContentLoaded', async () => {
   startRealtimeClock();
-  await loadData();
-  setupNavigation();
-  setupCardsTabs();
-  setupForms();
-  setupBarcodeModal();
-  setupAttachmentControls();
-  setupLogModal();
-  renderEverything();
-  setInterval(tickTimers, 1000);
+  setupAuthUI();
+  const ok = await ensureAuthenticated();
+  if (ok) {
+    await loadLevels();
+    await loadUsers();
+    await loadData();
+    const startTab = pickStartTab(currentUser, 'dashboard');
+    setupNavigation(startTab);
+    setupCardsTabs();
+    setupForms();
+    setupBarcodeModal();
+    setupAttachmentControls();
+    setupLogModal();
+    renderEverything();
+    setInterval(tickTimers, 1000);
+  }
 });

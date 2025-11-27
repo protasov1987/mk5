@@ -1,5 +1,9 @@
 <?php
 require_once __DIR__ . '/storage.php';
+require_once __DIR__ . '/auth.php';
+
+$currentUser = require_login($pdo);
+ensure_permission($currentUser, 'cards', 'view');
 
 $id = $_GET['id'] ?? '';
 if (!$id) {
