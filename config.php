@@ -1,5 +1,25 @@
 <?php
 // Общая конфигурация приложения
+// Явно задаём путь и параметры cookie для сессий, чтобы Timeweb не сбрасывал авторизацию между запросами.
+$sessionDir = __DIR__ . '/sessions';
+if (!is_dir($sessionDir)) {
+    @mkdir($sessionDir, 0775, true);
+}
+if (is_dir($sessionDir) && is_writable($sessionDir)) {
+    @session_save_path($sessionDir);
+}
+
+if (!headers_sent()) {
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+}
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
